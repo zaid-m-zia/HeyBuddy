@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/heybuddy-demo.svg" alt="HeyBuddy animated cursor demo" width="100%"/>
+<img src="heybuddy-demo.svg" alt="HeyBuddy animated cursor demo" width="100%"/>
 
 # 🫶 HeyBuddy
 
