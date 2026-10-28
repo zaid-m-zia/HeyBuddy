@@ -42,6 +42,7 @@ final class NotchController: NSObject {
     private var screenObserver: NSObjectProtocol?
     private var hideWork: DispatchWorkItem?
     private var dismissalWork: DispatchWorkItem?
+    private var hoverExitWork: DispatchWorkItem?
     private var stateText = "Listening"
     private var errorText: String?
 
@@ -62,6 +63,7 @@ final class NotchController: NSObject {
 
     func activate() {
         cancelPendingHide()
+        cancelPendingHoverExit()
         visibility.activate()
         errorText = nil
         stateText = "Listening"
@@ -113,6 +115,7 @@ final class NotchController: NSObject {
 
     func shutdown() {
         cancelPendingHide()
+        cancelPendingHoverExit()
         visibility.shutdown()
         if let observer = screenObserver { NotificationCenter.default.removeObserver(observer) }
         screenObserver = nil
@@ -216,10 +219,32 @@ final class NotchController: NSObject {
     }
 
     private func hoverChanged(_ isInside: Bool) {
-        guard visibility.setHovered(isInside), let screen = builtinScreen() else { return }
+        guard visibility.clickable else { return }
+        if isInside {
+            cancelPendingHoverExit()
+            setHovered(true)
+        } else if visibility.expanded {
+            // AppKit may report a transient exit while the panel's animated frame
+            // and its in-visible-rect tracking area are changing size.
+            hoverExitWork?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.hoverExitWork = nil
+                guard let screen = self.builtinScreen() else { return }
+                let expandedFrame = self.geometry(on: screen).frame(expanded: true)
+                guard !expandedFrame.contains(NSEvent.mouseLocation) else { return }
+                self.setHovered(false)
+            }
+            hoverExitWork = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14, execute: item)
+        }
+    }
+
+    private func setHovered(_ isHovered: Bool) {
+        guard visibility.setHovered(isHovered), let screen = builtinScreen() else { return }
         content?.update(state: stateText, error: errorText,
                         expanded: visibility.expanded, clickable: visibility.clickable)
-        resize(expanded: visibility.expanded, on: screen, duration: 0.22)
+        resize(expanded: visibility.expanded, on: screen, duration: 0.28)
     }
 
     private func scheduleHide(token: Int, delay: TimeInterval = 2.5) {
@@ -249,6 +274,11 @@ final class NotchController: NSObject {
         hideWork = nil
         dismissalWork?.cancel()
         dismissalWork = nil
+    }
+
+    private func cancelPendingHoverExit() {
+        hoverExitWork?.cancel()
+        hoverExitWork = nil
     }
 
     private func hidePanel() {
@@ -331,7 +361,7 @@ private final class NotchContentView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        guard hoverTrackingArea == nil else { return }
         let tracking = NSTrackingArea(rect: .zero,
                                       options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                       owner: self, userInfo: nil)
@@ -345,7 +375,8 @@ private final class NotchContentView: NSView {
     override func layout() {
         super.layout()
         let visibleHeight = max(24, bounds.height - notchDepth)
-        layer?.cornerRadius = min(18, bounds.height / 2)
+        // A smaller radius closes the visible gaps at the camera notch's shoulders.
+        layer?.cornerRadius = min(7, bounds.height / 2)
         layer?.masksToBounds = true
         face.frame = NSRect(x: 12, y: (visibleHeight - 24) / 2, width: 24, height: 24)
         stateLabel.frame = NSRect(x: 44, y: (visibleHeight - 16) / 2,

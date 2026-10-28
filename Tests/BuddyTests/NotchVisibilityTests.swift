@@ -44,6 +44,7 @@ final class NotchVisibilityTests: XCTestCase {
         XCTAssertTrue(notch.clickable)
         XCTAssertFalse(notch.expanded)
         XCTAssertTrue(notch.setHovered(true))
+        XCTAssertFalse(notch.setHovered(true))
         XCTAssertTrue(notch.expanded)
     }
 
@@ -52,6 +53,7 @@ final class NotchVisibilityTests: XCTestCase {
         notch.activate()
         XCTAssertTrue(notch.setHovered(true))
         XCTAssertTrue(notch.setHovered(false))
+        XCTAssertFalse(notch.setHovered(false))
         XCTAssertTrue(notch.visible)
         XCTAssertTrue(notch.clickable)
         XCTAssertFalse(notch.expanded)
