@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let ears    = Ears()
     let brain   = Brain()
     let voice   = AVSpeechSynthesizer()
+    lazy var player = PresentationPlayer(overlay: overlay)
 
     // MARK: UI
     var statusItem: NSStatusItem!
@@ -137,6 +138,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let t = menu.addItem(withTitle: "Test API", action: #selector(testAPI), keyEquivalent: "t")
         t.target = self
 
+        let d = menu.addItem(withTitle: "Demo Annotations", action: #selector(demoAnnotations), keyEquivalent: "d")
+        d.target = self
+
         let p = menu.addItem(withTitle: "Fix Permissions…", action: #selector(fixPermissions), keyEquivalent: "")
         p.target = self
 
@@ -186,6 +190,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             resAlert.addButton(withTitle: "OK")
             resAlert.runModal()
         }
+    }
+
+    @objc func demoAnnotations() {
+        guard state == .idle else { return }
+        blogInfo("[DEMO] Starting annotation demo")
+        let demoSteps: [Step] = [
+            Step(
+                say: "Welcome to HeyBuddy! Watch the pointer fly to the center of your screen.",
+                cue: nil,
+                focus: [500, 500],
+                annotations: [
+                    Annotation(type: "circle", point: nil, box_2d: [420, 420, 580, 580], from: nil, to: nil, points: nil, label: "Center Focus", text: nil),
+                    Annotation(type: "label", point: [500, 500], box_2d: nil, from: nil, to: nil, points: nil, label: nil, text: "Center Focus")
+                ],
+                keep: false
+            ),
+            Step(
+                say: "I can point out buttons, draw rectangles, and highlight key details.",
+                cue: "rectangles",
+                focus: [250, 300],
+                annotations: [
+                    Annotation(type: "rect", point: nil, box_2d: [200, 200, 300, 400], from: nil, to: nil, points: nil, label: nil, text: nil),
+                    Annotation(type: "highlight", point: nil, box_2d: [350, 200, 420, 400], from: nil, to: nil, points: nil, label: nil, text: nil),
+                    Annotation(type: "badge", point: [200, 200], box_2d: nil, from: nil, to: nil, points: nil, label: nil, text: "1")
+                ],
+                keep: false
+            ),
+            Step(
+                say: "Arrows can show flow from here all the way to there, with connections.",
+                cue: "here all the way to there",
+                focus: [300, 700],
+                annotations: [
+                    Annotation(type: "arrow", point: nil, box_2d: nil, from: [300, 600], to: [300, 800], points: nil, label: nil, text: nil),
+                    Annotation(type: "line", point: nil, box_2d: nil, from: nil, to: nil, points: [[400, 600], [400, 800]], label: nil, text: nil),
+                    Annotation(type: "underline", point: nil, box_2d: [450, 600, 480, 800], from: nil, to: nil, points: nil, label: nil, text: nil)
+                ],
+                keep: false
+            ),
+            Step(
+                say: "Polygons map irregular regions, while spotlights dim everything to focus on what matters.",
+                cue: "spotlights dim everything",
+                focus: [700, 500],
+                annotations: [
+                    Annotation(type: "polygon", point: nil, box_2d: nil, from: nil, to: nil, points: [[650, 350], [620, 450], [700, 500], [750, 420], [720, 340]], label: nil, text: nil),
+                    Annotation(type: "spotlight", point: nil, box_2d: [600, 600, 800, 850], from: nil, to: nil, points: nil, label: nil, text: nil),
+                    Annotation(type: "badge", point: [600, 600], box_2d: nil, from: nil, to: nil, points: nil, label: nil, text: "★")
+                ],
+                keep: false
+            ),
+            Step(
+                say: "Everything stays perfectly in sync with what I say, and cleans up when finished!",
+                cue: nil,
+                focus: [500, 500],
+                annotations: [
+                    Annotation(type: "ellipse", point: nil, box_2d: [450, 350, 550, 650], from: nil, to: nil, points: nil, label: nil, text: nil),
+                    Annotation(type: "label", point: [500, 500], box_2d: nil, from: nil, to: nil, points: nil, label: nil, text: "Synced Annotations ✓")
+                ],
+                keep: false
+            )
+        ]
+        present(Plan(steps: demoSteps, actions: nil, say: nil, points: nil))
     }
 
     // -------------------------------------------------------------------------
@@ -355,6 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestTask = nil
         screenshotTask?.cancel()
         screenshotTask = nil
+        player.cancel()
         voice.stopSpeaking(at: .immediate)
         overlay.cancel()
         transition(to: .idle)
@@ -442,15 +508,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // -------------------------------------------------------------------------
-    // MARK: - Presentation (Stage 2)
+    // MARK: - Presentation (Stage 2, 4, 5)
     // -------------------------------------------------------------------------
 
     private func present(_ plan: Plan) {
         disarmWatchdog()  // Watchdog suspended while presenting
         transition(to: .presenting)
 
-        say(plan.say)
-        overlay.point(plan.points ?? []) { [weak self] in
+        let steps = plan.normalizedSteps()
+        player.play(steps: steps) { [weak self] in
             guard let self else { return }
             if let acts = plan.actions, !acts.isEmpty {
                 self.showConfirmation(acts)
@@ -469,6 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestTask = nil
         screenshotTask?.cancel()
         screenshotTask = nil
+        player.cancel()
         overlay.hide()
         transition(to: .idle)
         blogInfo("[STATE] \(RequestClock.shared.elapsed) → idle (finish)")

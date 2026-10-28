@@ -110,9 +110,80 @@ enum Settings {
 // MARK: - Shared model types
 // ---------------------------------------------------------------------------
 
-struct Point:  Codable { var x: Double; var y: Double; var label: String? }
-struct Action: Codable { var tool: String; var arg: String; var why: String? }
-struct Plan:   Codable { var say: String; var points: [Point]?; var actions: [Action]? }
+// ---------------------------------------------------------------------------
+// MARK: - Shared Model Types (Stage 3: Timeline & Rich Annotations)
+// ---------------------------------------------------------------------------
+
+struct Point: Codable {
+    var x: Double
+    var y: Double
+    var label: String?
+}
+
+struct Action: Codable {
+    var tool: String
+    var arg: String
+    var why: String?
+}
+
+struct Annotation: Codable {
+    var type: String                      // pointer, circle, ellipse, rect, arrow, line, polyline, polygon, underline, highlight, spotlight, badge, label
+    var point: [Double]?                  // [y, x] in 0-1000 grid
+    var box_2d: [Double]?                 // [ymin, xmin, ymax, xmax] in 0-1000 grid
+    var from: [Double]?                   // [y, x]
+    var to: [Double]?                     // [y, x]
+    var points: [[Double]]?               // [[y, x], ...]
+    var label: String?
+    var text: String?
+}
+
+struct Step: Codable {
+    var say: String
+    var cue: String?                      // Substring of say where visual triggers
+    var focus: [Double]?                  // [y, x] focus point for the pointer
+    var annotations: [Annotation]?
+    var keep: Bool?                       // If true, don't auto-fade at step end
+}
+
+struct Plan: Codable {
+    // New format (Stage 3):
+    var steps: [Step]?
+    var actions: [Action]?
+
+    // Backwards-compatible legacy format:
+    var say: String?
+    var points: [Point]?
+
+    /// Normalizes the plan into an ordered sequence of Steps.
+    func normalizedSteps() -> [Step] {
+        if let s = steps, !s.isEmpty {
+            return s
+        }
+        let legacySay = say ?? ""
+        if let pts = points, !pts.isEmpty {
+            return pts.enumerated().map { idx, pt in
+                let a = Annotation(
+                    type: "pointer",
+                    point: [pt.y, pt.x],
+                    box_2d: nil,
+                    from: nil,
+                    to: nil,
+                    points: nil,
+                    label: pt.label,
+                    text: nil
+                )
+                return Step(
+                    say: idx == 0 ? legacySay : "",
+                    cue: nil,
+                    focus: [pt.y, pt.x],
+                    annotations: [a],
+                    keep: false
+                )
+            }
+        }
+        return [Step(say: legacySay, cue: nil, focus: nil, annotations: nil, keep: false)]
+    }
+}
 
 // ---------------------------------------------------------------------------
 // MARK: - Brain Errors
@@ -219,16 +290,44 @@ final class Brain {
     private func systemPrompt() -> String {
         """
         You are \(Settings.name), a friendly AI buddy that lives next to the user's mouse cursor on macOS.
-        You get a screenshot, what the user said, and info about their cursor gesture. Coordinates are on a
-        0-1000 grid over the screenshot, origin top-left, x right, y down.
-        Reply with ONLY JSON: {"say": string, "points": [{"x":number,"y":number,"label":string}], "actions": [{"tool":"applescript"|"shell"|"open","arg":string,"why":string}]}
+        You get a screenshot, what the user said, and cursor gesture info.
+        Coordinates are normalized 0-1000 over the screenshot. Points are [y, x] (origin top-left, y down, x right).
+        Boxes are box_2d: [ymin, xmin, ymax, xmax].
+
+        Reply with ONLY JSON conforming to:
+        {
+          "steps": [
+            {
+              "say": "One or two short, warm spoken sentences without markdown.",
+              "cue": "optional exact substring in say when visual should appear",
+              "focus": [y, x],
+              "annotations": [
+                {"type": "pointer", "point": [y, x], "label": "text"},
+                {"type": "circle", "box_2d": [ymin, xmin, ymax, xmax]},
+                {"type": "ellipse", "box_2d": [ymin, xmin, ymax, xmax]},
+                {"type": "rect", "box_2d": [ymin, xmin, ymax, xmax]},
+                {"type": "arrow", "from": [y, x], "to": [y, x]},
+                {"type": "line", "points": [[y, x], [y, x]]},
+                {"type": "polyline", "points": [[y, x], ...]},
+                {"type": "polygon", "points": [[y, x], ...]},
+                {"type": "underline", "box_2d": [ymin, xmin, ymax, xmax]},
+                {"type": "highlight", "box_2d": [ymin, xmin, ymax, xmax]},
+                {"type": "spotlight", "box_2d": [ymin, xmin, ymax, xmax]},
+                {"type": "badge", "point": [y, x], "text": "1"},
+                {"type": "label", "point": [y, x], "text": "text"}
+              ],
+              "keep": false
+            }
+          ],
+          "actions": [{"tool": "applescript"|"shell"|"open", "arg": "string", "why": "string"}]
+        }
+
         Rules:
-        - "say" is spoken aloud: warm, short, conversational, no markdown.
-        - If the user wants to learn or understand something on screen, put points in the order you explain them (label = 1-4 words) and narrate them in "say".
-        - If the user circled or pointed at something, that is what they mean by "this" / "these".
-        - If the user wants something DONE, put the steps in "actions" (macOS: zsh commands, AppleScript for Finder/apps, or open). Absolute paths, ~ for home. Finder selection: tell application "Finder" to get selection. Make "why" plain English. The user confirms before anything runs.
-        - Never invent things you can't see. If unsure, ask a short clarifying question in "say" with empty points/actions.
-        - Leave "points" and "actions" empty when not needed.
+        - At most 6 steps. "say" is spoken aloud: concise, warm, natural, zero markdown.
+        - Tight boxes around real elements. Use arrows for "from here to there", underline for text, spotlight to dim surroundings and focus attention.
+        - Draw NOTHING when it doesn't help. If unsure of a location, say so and draw nothing.
+        - For actions: macOS zsh commands, AppleScript for Finder/apps, or open. Absolute paths or ~ for home. Finder selection: tell application "Finder" to get selection.
+        - Keep "actions" empty when not executing system tasks.
         """
     }
 
@@ -302,11 +401,14 @@ final class Brain {
         }
 
         // Update conversation history
+        let allSpeech = plan.steps?.map { $0.say }.joined(separator: " ") ?? plan.say ?? ""
         history.append(["role": "user",  "parts": [["text": prompt]]])
-        history.append(["role": "model", "parts": [["text": plan.say]]])
+        history.append(["role": "model", "parts": [["text": allSpeech]]])
         if history.count > 12 { history.removeFirst(history.count - 12) }
 
-        blogInfo("[BRAIN] \(RequestClock.shared.elapsed) ✓ [\(winningModel)] say='\(plan.say.prefix(60))' pts=\(plan.points?.count ?? 0) acts=\(plan.actions?.count ?? 0)")
+        let stepsCount = plan.steps?.count ?? 1
+        let annotCount = plan.steps?.reduce(0, { $0 + ($1.annotations?.count ?? 0) }) ?? (plan.points?.count ?? 0)
+        blogInfo("[BRAIN] \(RequestClock.shared.elapsed) ✓ [\(winningModel)] say='\(allSpeech.prefix(60))' steps=\(stepsCount) annots=\(annotCount) acts=\(plan.actions?.count ?? 0)")
         return plan
     }
 
@@ -513,10 +615,23 @@ final class Brain {
            let plan = try? JSONDecoder().decode(Plan.self, from: data) {
             return plan
         }
+
+        // Substring fallback: find outer JSON braces in case of surrounding text
+        if let firstBrace = cleaned.firstIndex(of: "{"),
+           let lastBrace = cleaned.lastIndex(of: "}"),
+           firstBrace < lastBrace {
+            let jsonSub = String(cleaned[firstBrace...lastBrace])
+            if let subData = jsonSub.data(using: .utf8),
+               let plan = try? JSONDecoder().decode(Plan.self, from: subData) {
+                blogInfo("[BRAIN] decoded plan via JSON substring extraction ✓")
+                return plan
+            }
+        }
+
         // If prose instead of JSON, treat as spoken reply
         if !cleaned.hasPrefix("{") {
             blogWarn("[BRAIN] Model returned prose; speaking it directly.")
-            return Plan(say: cleaned, points: nil, actions: nil)
+            return Plan(steps: [Step(say: cleaned, cue: nil, focus: nil, annotations: nil, keep: false)], actions: nil, say: cleaned, points: nil)
         }
         blogError("[BRAIN] JSON decode failed. raw=\(raw.prefix(300))")
         throw BrainError.decodeFailed("Couldn't parse the model's reply. Please try again.")
