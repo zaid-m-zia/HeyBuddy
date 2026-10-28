@@ -2,10 +2,39 @@ import AppKit
 import CoreGraphics
 import QuartzCore
 
+/// Window geometry is in AppKit screen points. The physical camera cutout uses
+/// the top safe-area depth; visible content lives in the short band below it.
+struct NotchGeometry {
+    let screenFrame: NSRect
+    let centerX: CGFloat
+    let notchWidth: CGFloat?
+    let safeAreaTop: CGFloat
+
+    var notchDepth: CGFloat {
+        guard let notchWidth, notchWidth > 0 else { return 0 }
+        return max(0, safeAreaTop)
+    }
+
+    var compactSize: NSSize {
+        let width = min(screenFrame.width - 40, max(180, (notchWidth ?? 0) + 28))
+        return NSSize(width: width, height: notchDepth + (notchDepth > 0 ? 24 : 31))
+    }
+
+    var expandedSize: NSSize {
+        let width = min(screenFrame.width - 40, max(490, compactSize.width * 2.45))
+        return NSSize(width: width, height: notchDepth + (notchDepth > 0 ? 32 : 42))
+    }
+
+    func frame(expanded: Bool) -> NSRect {
+        let size = expanded ? expandedSize : compactSize
+        return NSRect(x: centerX - size.width / 2,
+                      y: screenFrame.maxY - size.height,
+                      width: size.width, height: size.height)
+    }
+}
+
 @MainActor
 final class NotchController: NSObject {
-    private let compactSize = NSSize(width: 154, height: 31)
-    private let expandedSize = NSSize(width: 510, height: 48)
     private var visibility = NotchVisibility()
     private var panel: NSPanel?
     private var content: NotchContentView?
@@ -43,13 +72,17 @@ final class NotchController: NSObject {
         }
         ensurePanel(on: screen)
         guard let panel, let content else { return }
-        let startFrame = capsuleFrame(on: screen, size: compactSize)
+        let geometry = geometry(on: screen)
+        let startFrame = geometry.frame(expanded: false)
         if !panel.isVisible { panel.setFrame(startFrame, display: true) }
+        content.notchDepth = geometry.notchDepth
+        content.attachmentWidth = geometry.notchDepth > 0
+            ? (geometry.notchWidth ?? startFrame.width) + 16 : startFrame.width
         content.update(state: stateText, error: nil, expanded: true, clickable: true)
         panel.ignoresMouseEvents = false
         panel.orderFrontRegardless()
         content.revealFace(reduceMotion: reduceMotion)
-        resize(to: expandedSize, on: screen, duration: 0.26)
+        resize(expanded: true, on: screen, duration: 0.26)
         installOutsideMonitors()
     }
 
@@ -128,27 +161,26 @@ final class NotchController: NSObject {
         }
     }
 
-    private func capsuleFrame(on screen: NSScreen, size: NSSize) -> NSRect {
+    private func geometry(on screen: NSScreen) -> NotchGeometry {
         let centerX: CGFloat
+        var notchWidth: CGFloat?
         if let left = screen.auxiliaryTopLeftArea,
            let right = screen.auxiliaryTopRightArea,
-           !left.isEmpty, !right.isEmpty {
+           !left.isEmpty, !right.isEmpty,
+           right.minX > left.maxX {
             centerX = (left.maxX + right.minX) / 2
+            notchWidth = right.minX - left.maxX
         } else {
             centerX = screen.frame.midX
         }
-        let width = min(size.width, screen.frame.width - 24)
-        // The camera notch occupies the top safe area; put the face on real pixels
-        // immediately below it, with a small overlap so the two read as one shape.
-        let notchBottom = screen.frame.maxY - screen.safeAreaInsets.top
-        let top = screen.safeAreaInsets.top > 0 ? notchBottom + 4 : screen.frame.maxY
-        return NSRect(x: centerX - width / 2, y: top - size.height,
-                      width: width, height: size.height)
+        return NotchGeometry(screenFrame: screen.frame, centerX: centerX,
+                             notchWidth: notchWidth, safeAreaTop: screen.safeAreaInsets.top)
     }
 
     private func ensurePanel(on screen: NSScreen) {
-        if panel != nil { reposition(); return }
-        let frame = capsuleFrame(on: screen, size: compactSize)
+        if panel != nil { return }
+        let geometry = geometry(on: screen)
+        let frame = geometry.frame(expanded: false)
         let window = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false, screen: screen)
         window.isOpaque = false
@@ -160,6 +192,9 @@ final class NotchController: NSObject {
         window.ignoresMouseEvents = true
         window.isReleasedWhenClosed = false
         let view = NotchContentView(frame: NSRect(origin: .zero, size: frame.size))
+        view.notchDepth = geometry.notchDepth
+        view.attachmentWidth = geometry.notchDepth > 0
+            ? (geometry.notchWidth ?? frame.width) + 16 : frame.width
         view.onCapsuleClick = { [weak self] in self?.reopen() }
         view.onStop = { [weak self] in self?.onStop?() }
         view.onReplay = { [weak self] in self?.onReplay?() }
@@ -171,9 +206,9 @@ final class NotchController: NSObject {
         content = view
     }
 
-    private func resize(to size: NSSize, on screen: NSScreen, duration: TimeInterval) {
+    private func resize(expanded: Bool, on screen: NSScreen, duration: TimeInterval) {
         guard let panel else { return }
-        let frame = capsuleFrame(on: screen, size: size)
+        let frame = geometry(on: screen).frame(expanded: expanded)
         if reduceMotion { panel.setFrame(frame, display: true); return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
@@ -186,7 +221,11 @@ final class NotchController: NSObject {
         guard let panel else { return }
         guard let screen = builtinScreen() else { hidePanel(); return }
         if visibility.visible {
-            panel.setFrame(capsuleFrame(on: screen, size: visibility.expanded ? expandedSize : compactSize), display: true)
+            let geometry = geometry(on: screen)
+            content?.notchDepth = geometry.notchDepth
+            content?.attachmentWidth = geometry.notchDepth > 0
+                ? (geometry.notchWidth ?? geometry.compactSize.width) + 16 : geometry.expandedSize.width
+            panel.setFrame(geometry.frame(expanded: visibility.expanded), display: true)
             panel.ignoresMouseEvents = !visibility.clickable
             panel.orderFrontRegardless()
         }
@@ -196,7 +235,7 @@ final class NotchController: NSObject {
         guard visibility.clickable, visibility.expanded else { return }
         visibility.clickedOutside()
         content?.update(state: stateText, error: errorText, expanded: false, clickable: true)
-        if let screen = builtinScreen() { resize(to: compactSize, on: screen, duration: 0.21) }
+        if let screen = builtinScreen() { resize(expanded: false, on: screen, duration: 0.21) }
         if visibility.phase == .grace { scheduleHide(token: visibility.generation) }
     }
 
@@ -204,7 +243,7 @@ final class NotchController: NSObject {
         guard visibility.clickable else { return }
         visibility.clickedCapsule()
         content?.update(state: stateText, error: errorText, expanded: true, clickable: true)
-        if let screen = builtinScreen() { resize(to: expandedSize, on: screen, duration: 0.25) }
+        if let screen = builtinScreen() { resize(expanded: true, on: screen, duration: 0.25) }
         if visibility.phase == .grace { scheduleHide(token: visibility.generation) }
     }
 
@@ -218,7 +257,7 @@ final class NotchController: NSObject {
                                  expanded: false, clickable: false)
             self.content?.hideFace(reduceMotion: self.reduceMotion)
             if let screen = self.builtinScreen() {
-                self.resize(to: self.compactSize, on: screen, duration: 0.2)
+                self.resize(expanded: false, on: screen, duration: 0.2)
             }
             let end = DispatchWorkItem { [weak self] in
                 guard let self, self.visibility.finishDismissal(ifGeneration: token) else { return }
@@ -313,13 +352,15 @@ private final class NotchContentView: NSView {
     private var controls: [NSButton] = []
     private var expanded = false
     private var clickable = false
+    private let capsuleMask = CAShapeLayer()
+    var notchDepth: CGFloat = 0 { didSet { needsLayout = true } }
+    var attachmentWidth: CGFloat = 0 { didSet { needsLayout = true } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor(srgbRed: 0.025, green: 0.03, blue: 0.045, alpha: 0.98).cgColor
-        layer?.cornerRadius = 18
-        layer?.masksToBounds = true
+        layer?.mask = capsuleMask
         addSubview(face)
         stateLabel.textColor = .white
         stateLabel.font = .systemFont(ofSize: 11, weight: .medium)
@@ -342,12 +383,40 @@ private final class NotchContentView: NSView {
 
     override func layout() {
         super.layout()
-        layer?.cornerRadius = bounds.height / 2
-        face.frame = NSRect(x: 12, y: (bounds.height - 26) / 2, width: 26, height: 26)
-        stateLabel.frame = NSRect(x: 46, y: (bounds.height - 16) / 2, width: expanded ? 105 : max(0, bounds.width - 54), height: 16)
+        let visibleHeight = max(24, bounds.height - notchDepth)
+        let radius = min(14, visibleHeight / 2)
+        let shoulderY = min(bounds.height, visibleHeight)
+        let topWidth = min(bounds.width, max(0, attachmentWidth))
+        let topLeft = (bounds.width - topWidth) / 2
+        let topRight = (bounds.width + topWidth) / 2
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: topLeft, y: bounds.height))
+        path.addLine(to: CGPoint(x: topRight, y: bounds.height))
+        path.addCurve(to: CGPoint(x: bounds.width, y: shoulderY),
+                      control1: CGPoint(x: topRight + (bounds.width - topRight) * 0.55, y: bounds.height),
+                      control2: CGPoint(x: bounds.width, y: shoulderY + (bounds.height - shoulderY) * 0.45))
+        path.addLine(to: CGPoint(x: bounds.width, y: radius))
+        path.addQuadCurve(to: CGPoint(x: bounds.width - radius, y: 0),
+                          control: CGPoint(x: bounds.width, y: 0))
+        path.addLine(to: CGPoint(x: radius, y: 0))
+        path.addQuadCurve(to: CGPoint(x: 0, y: radius), control: .zero)
+        path.addLine(to: CGPoint(x: 0, y: shoulderY))
+        path.addCurve(to: CGPoint(x: topLeft, y: bounds.height),
+                      control1: CGPoint(x: 0, y: shoulderY + (bounds.height - shoulderY) * 0.45),
+                      control2: CGPoint(x: topLeft - topLeft * 0.55, y: bounds.height))
+        path.closeSubpath()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        capsuleMask.frame = bounds
+        capsuleMask.path = path
+        CATransaction.commit()
+
+        face.frame = NSRect(x: 12, y: (visibleHeight - 24) / 2, width: 24, height: 24)
+        stateLabel.frame = NSRect(x: 44, y: (visibleHeight - 16) / 2,
+                                  width: expanded ? 105 : max(0, bounds.width - 52), height: 16)
         var x: CGFloat = 155
         for (button, width) in zip(controls, [50.0, 58.0, 53.0, 63.0, 55.0]) {
-            button.frame = NSRect(x: x, y: (bounds.height - 26) / 2, width: width, height: 26)
+            button.frame = NSRect(x: x, y: (visibleHeight - 26) / 2, width: width, height: 26)
             x += width + 8
         }
     }
