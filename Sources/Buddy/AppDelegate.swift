@@ -316,11 +316,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // -------------------------------------------------------------------------
 
     private func runRequest(gesture: String) async {
-        defer {
-            // Stage 2: every exit path (success, error, cancel, empty) returns to idle.
-            Task { @MainActor [weak self] in self?.finish() }
-        }
-
         // Stage 4: await the final transcript.
         let rawText = await ears.stop()
         blogInfo("[EARS] \(RequestClock.shared.elapsed) transcript='\(rawText)'")
@@ -334,9 +329,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if text.trimmingCharacters(in: .whitespaces).isEmpty {
             blogInfo("[EARS] empty transcript – giving feedback")
-            Task { @MainActor [weak self] in
+            await MainActor.run { [weak self] in
                 self?.say("I didn't catch that. Hold Control and Option, then speak.")
                 self?.overlay.setLabel("didn't catch that")
+                self?.finish()
             }
             return
         }
@@ -353,16 +349,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 capture = try await Screen.capture()
             }
             // Update overlay to use same display as screenshot.
-            Task { @MainActor [weak self] in
+            await MainActor.run { [weak self] in
                 self?.overlay.setDisplayFrame(capture.displayFrame)
             }
         } catch {
             // Screenshot failure: proceed with a clear spoken message.
             blogError("[SCREEN] capture failed: \(error.localizedDescription)")
-            Task { @MainActor [weak self] in
+            await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.say("I can't see the screen. Check Screen Recording permission and try again.")
                 self.overlay.setLabel("screen capture failed")
+                self.finish()
             }
             return
         }
@@ -375,18 +372,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             plan = try await brain.ask(text: text, image: capture.jpeg, gesture: gesture)
         } catch is CancellationError {
             blogInfo("[BRAIN] request cancelled")
-            return  // defer handles finish()
+            await MainActor.run { [weak self] in self?.finish() }
+            return
         } catch {
             blogError("[BRAIN] error: \(error.localizedDescription)")
-            Task { @MainActor [weak self] in
+            await MainActor.run { [weak self] in
                 self?.say(error.localizedDescription)
                 self?.overlay.setLabel("error")
+                self?.finish()
             }
             return
         }
 
         // Hand off to the presentation phase on the main actor.
-        Task { @MainActor [weak self] in
+        // finish() will be called when presentation finishes (speech + animations).
+        await MainActor.run { [weak self] in
             self?.present(plan)
         }
     }
@@ -396,7 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // -------------------------------------------------------------------------
 
     private func present(_ plan: Plan) {
-        disarmWatchdog()  // stop watchdog while presenting; re-arm for animation.
+        disarmWatchdog()  // Watchdog suspended while presenting
         transition(to: .presenting)
 
         say(plan.say)
@@ -408,12 +408,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.finish()
             }
         }
-        // Watchdog for the presentation phase.
-        armWatchdog()
     }
 
     // -------------------------------------------------------------------------
-    // MARK: - Central finish (Stage 2) – called by EVERY exit path via defer
+    // MARK: - Central finish (Stage 2) – called by exit paths
     // -------------------------------------------------------------------------
 
     private func finish() {
@@ -443,7 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = DispatchWorkItem { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                blogError("[WATCHDOG] 30 s limit hit in state \(self.state). Aborting.")
+                blogError("[WATCHDOG] 45 s limit hit in state \(self.state). Aborting.")
                 self.requestTask?.cancel()
                 self.requestTask = nil
                 self.say("Sorry, that took too long. Please try again.")
@@ -451,7 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         watchdog = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 45, execute: item)
     }
 
     private func disarmWatchdog() {
