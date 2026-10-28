@@ -3,5 +3,7 @@ import PackageDescription
 let package = Package(
     name: "Buddy",
     platforms: [.macOS(.v13)],
-    targets: [.executableTarget(name: "Buddy", path: "Sources/Buddy")]
+    targets: [
+        .executableTarget(name: "Buddy", path: "Sources/Buddy")
+    ]
 )
