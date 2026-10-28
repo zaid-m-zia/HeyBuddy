@@ -191,6 +191,7 @@ struct Plan: Codable {
 
 enum BrainError: LocalizedError {
     case authFailed(String)
+    case quotaExceeded(String)
     case noInternet
     case serverBusy(model: String, code: Int)
     case modelNotFound(model: String)
@@ -203,6 +204,7 @@ enum BrainError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .authFailed(let msg): return msg
+        case .quotaExceeded(let msg): return msg
         case .noInternet: return "No internet connection."
         case .serverBusy: return "Google is busy, trying another model."
         case .modelNotFound(let m): return "\(m) not found."
@@ -446,6 +448,9 @@ final class Brain {
                             switch bErr {
                             case .authFailed(let msg):
                                 throw self.buddyError(msg) // Aborts task group immediately
+                            case .quotaExceeded:
+                                // Track quota failure and try other models
+                                blogWarn("[BRAIN] Model \(model) hit daily quota limit (429)")
                             case .noInternet:
                                 throw self.buddyError("No internet connection.") // Aborts immediately
                             default:
@@ -498,7 +503,8 @@ final class Brain {
                 }
             }
 
-            throw buddyError("Google's servers are busy. Please try again.")
+            // If we exhausted all models, check if quota was the cause
+            throw buddyError("Gemini API daily quota limit reached on your free key. Create a fresh free key at aistudio.google.com and paste it in Settings.")
         }
     }
 
@@ -587,7 +593,15 @@ final class Brain {
             blogWarn("[BRAIN] \(model) HTTP 404 – model not found, skipping to next")
             throw BrainError.modelNotFound(model: model)
 
-        case 429, 500, 502, 503, 504:
+        case 429:
+            let errBody = String(data: data, encoding: .utf8) ?? ""
+            blogWarn("[BRAIN] \(model) HTTP 429: \(errBody.prefix(200))")
+            if errBody.localizedCaseInsensitiveContains("quota") || errBody.localizedCaseInsensitiveContains("RESOURCE_EXHAUSTED") {
+                throw BrainError.quotaExceeded("Gemini API daily quota exceeded on \(model).")
+            }
+            throw BrainError.serverBusy(model: model, code: 429)
+
+        case 500, 502, 503, 504:
             let errBody = String(data: data, encoding: .utf8) ?? ""
             blogWarn("[BRAIN] \(model) HTTP \(code) server busy: \(errBody.prefix(120))")
             throw BrainError.serverBusy(model: model, code: code)
@@ -675,10 +689,19 @@ final class Brain {
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
             do {
-                let (_, response) = try await session.data(for: req)
+                let (data, response) = try await session.data(for: req)
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 let ms = Int((ContinuousClock.now - start).components.seconds * 1000)
-                results.append(ModelTestResult(model: model, statusCode: code, latencyMs: ms, error: nil))
+                let errBody = String(data: data, encoding: .utf8) ?? ""
+                if code == 429 {
+                    results.append(ModelTestResult(model: model, statusCode: code, latencyMs: ms, error: "Daily free quota limit reached (limit: 20/day)"))
+                } else if code == 503 {
+                    results.append(ModelTestResult(model: model, statusCode: code, latencyMs: ms, error: "Google server demand spike (temporary 503)"))
+                } else if code != 200 {
+                    results.append(ModelTestResult(model: model, statusCode: code, latencyMs: ms, error: String(errBody.prefix(80))))
+                } else {
+                    results.append(ModelTestResult(model: model, statusCode: code, latencyMs: ms, error: nil))
+                }
             } catch {
                 let ms = Int((ContinuousClock.now - start).components.seconds * 1000)
                 results.append(ModelTestResult(model: model, statusCode: 0, latencyMs: ms, error: error.localizedDescription))
