@@ -89,11 +89,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
 
-        // Stage 9: one-time API key migration from UserDefaults → Keychain.
-        KeychainStore.migrateFromUserDefaults()
+        // Stage 2: Initialize settings from memory/UserDefaults (silently migrate Keychain without prompting).
+        Settings.initialize()
 
-        // Stage 0 fix: requestPermissions() is called here, on every launch.
-        requestPermissions()
+        // Prompting permission calls happen once at first launch/onboarding or via "Fix permissions" menu item.
+        let initialPerms = currentPermissions()
+        if initialPerms.mic == "notDetermined" || initialPerms.speech == "notDetermined" {
+            requestPermissions()
+        }
 
         // Onboard if name or API key is missing.
         if Settings.name.isEmpty || Settings.apiKey.isEmpty { onboard() }
@@ -130,13 +133,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "◎"
         let menu = NSMenu()
-        let s = menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: "")
+
+        let t = menu.addItem(withTitle: "Test API", action: #selector(testAPI), keyEquivalent: "t")
+        t.target = self
+
+        let p = menu.addItem(withTitle: "Fix Permissions…", action: #selector(fixPermissions), keyEquivalent: "")
+        p.target = self
+
+        menu.addItem(NSMenuItem.separator())
+
+        let s = menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         s.target = self
+
+        menu.addItem(NSMenuItem.separator())
+
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
     }
 
     @objc func openSettings() { onboard() }
+
+    @objc func fixPermissions() {
+        requestPermissions()
+        let perms = currentPermissions()
+        blogInfo("[PERMS] manual fix triggered: \(perms)")
+    }
+
+    @objc func testAPI() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Testing Gemini API…"
+        alert.informativeText = "Sending test ping to all configured models..."
+        alert.addButton(withTitle: "OK")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let results = await self.brain.testAllModels()
+            let report = results.map { r -> String in
+                if r.statusCode == 200 {
+                    return "• \(r.model): HTTP 200 (\(r.latencyMs) ms) ✓"
+                } else if r.statusCode > 0 {
+                    let desc = r.statusCode == 503 ? " (Busy/503)" : ""
+                    return "• \(r.model): HTTP \(r.statusCode) (\(r.latencyMs) ms)\(desc)"
+                } else {
+                    return "• \(r.model): \(r.error ?? "Failed") (\(r.latencyMs) ms)"
+                }
+            }.joined(separator: "\n")
+
+            let resAlert = NSAlert()
+            resAlert.messageText = "Gemini API Test Results"
+            resAlert.informativeText = report
+            resAlert.addButton(withTitle: "OK")
+            resAlert.runModal()
+        }
+    }
 
     // -------------------------------------------------------------------------
     // MARK: - Onboarding (Stage 0 – brace fix applied here)
