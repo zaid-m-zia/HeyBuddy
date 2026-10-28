@@ -1,6 +1,6 @@
 import Foundation
 
-/// The notch's click eligibility is independent of the assistant's work state.
+/// The notch's hover visibility is independent of the assistant's work state.
 struct NotchVisibility {
     enum Phase: Equatable { case hidden, active, grace, dismissing }
 
@@ -14,7 +14,7 @@ struct NotchVisibility {
     mutating func activate() {
         generation += 1
         phase = .active
-        expanded = true
+        expanded = false
     }
 
     mutating func complete() -> Int {
@@ -24,16 +24,12 @@ struct NotchVisibility {
         return generation
     }
 
-    mutating func clickedOutside() {
-        guard clickable else { return }
-        expanded = false
-        if phase == .grace { generation += 1 }
-    }
-
-    mutating func clickedCapsule() {
-        guard clickable else { return }
-        expanded = true
-        if phase == .grace { generation += 1 }
+    @discardableResult
+    mutating func setHovered(_ hovered: Bool) -> Bool {
+        guard clickable else { return false }
+        guard expanded != hovered else { return false }
+        expanded = hovered
+        return true
     }
 
     mutating func beginDismissal(ifGeneration token: Int) -> Bool {

@@ -16,12 +16,13 @@ struct NotchGeometry {
     }
 
     var compactSize: NSSize {
-        let width = min(screenFrame.width - 40, max(180, (notchWidth ?? 0) + 28))
+        let width = min(screenFrame.width - 40, max(180, min(260, (notchWidth ?? 0) + 28)))
         return NSSize(width: width, height: notchDepth + (notchDepth > 0 ? 24 : 31))
     }
 
     var expandedSize: NSSize {
-        let width = min(screenFrame.width - 40, max(490, compactSize.width * 2.45))
+        let width = min(600, screenFrame.width * 0.60, screenFrame.width - 48,
+                        max(490, compactSize.width * 2.45))
         return NSSize(width: width, height: notchDepth + (notchDepth > 0 ? 32 : 42))
     }
 
@@ -38,8 +39,6 @@ final class NotchController: NSObject {
     private var visibility = NotchVisibility()
     private var panel: NSPanel?
     private var content: NotchContentView?
-    private var outsideMonitor: Any?
-    private var localMonitor: Any?
     private var screenObserver: NSObjectProtocol?
     private var hideWork: DispatchWorkItem?
     private var dismissalWork: DispatchWorkItem?
@@ -74,16 +73,12 @@ final class NotchController: NSObject {
         guard let panel, let content else { return }
         let geometry = geometry(on: screen)
         let startFrame = geometry.frame(expanded: false)
-        if !panel.isVisible { panel.setFrame(startFrame, display: true) }
+        panel.setFrame(startFrame, display: true)
         content.notchDepth = geometry.notchDepth
-        content.attachmentWidth = geometry.notchDepth > 0
-            ? (geometry.notchWidth ?? startFrame.width) + 16 : startFrame.width
-        content.update(state: stateText, error: nil, expanded: true, clickable: true)
+        content.update(state: stateText, error: nil, expanded: false, clickable: true)
         panel.ignoresMouseEvents = false
         panel.orderFrontRegardless()
         content.revealFace(reduceMotion: reduceMotion)
-        resize(expanded: true, on: screen, duration: 0.26)
-        installOutsideMonitors()
     }
 
     func update(_ state: AppState, error: String? = nil) {
@@ -112,7 +107,6 @@ final class NotchController: NSObject {
 
     func extendGrace(by seconds: TimeInterval = 2.5) {
         guard visibility.phase == .grace else { return }
-        visibility.clickedCapsule()
         hideWork?.cancel()
         scheduleHide(token: visibility.generation, delay: seconds)
     }
@@ -120,7 +114,6 @@ final class NotchController: NSObject {
     func shutdown() {
         cancelPendingHide()
         visibility.shutdown()
-        removeOutsideMonitors()
         if let observer = screenObserver { NotificationCenter.default.removeObserver(observer) }
         screenObserver = nil
         hidePanel()
@@ -129,17 +122,12 @@ final class NotchController: NSObject {
         content = nil
     }
 
-    /// A deterministic UI preview; no speech, screenshot, or network call.
+    /// A deterministic preview; hover the compact notch to test expansion. No network call.
     func preview() {
         activate()
         let token = visibility.generation
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self, self.visibility.generation == token else { return }
-            self.collapse()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            guard let self, self.visibility.generation == token else { return }
-            self.reopen()
             self.update(.processing)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
@@ -193,9 +181,7 @@ final class NotchController: NSObject {
         window.isReleasedWhenClosed = false
         let view = NotchContentView(frame: NSRect(origin: .zero, size: frame.size))
         view.notchDepth = geometry.notchDepth
-        view.attachmentWidth = geometry.notchDepth > 0
-            ? (geometry.notchWidth ?? frame.width) + 16 : frame.width
-        view.onCapsuleClick = { [weak self] in self?.reopen() }
+        view.onHoverChanged = { [weak self] inside in self?.hoverChanged(inside) }
         view.onStop = { [weak self] in self?.onStop?() }
         view.onReplay = { [weak self] in self?.onReplay?() }
         view.onSettings = { [weak self] in self?.showSettings() }
@@ -223,35 +209,23 @@ final class NotchController: NSObject {
         if visibility.visible {
             let geometry = geometry(on: screen)
             content?.notchDepth = geometry.notchDepth
-            content?.attachmentWidth = geometry.notchDepth > 0
-                ? (geometry.notchWidth ?? geometry.compactSize.width) + 16 : geometry.expandedSize.width
             panel.setFrame(geometry.frame(expanded: visibility.expanded), display: true)
             panel.ignoresMouseEvents = !visibility.clickable
             panel.orderFrontRegardless()
         }
     }
 
-    private func collapse() {
-        guard visibility.clickable, visibility.expanded else { return }
-        visibility.clickedOutside()
-        content?.update(state: stateText, error: errorText, expanded: false, clickable: true)
-        if let screen = builtinScreen() { resize(expanded: false, on: screen, duration: 0.21) }
-        if visibility.phase == .grace { scheduleHide(token: visibility.generation) }
-    }
-
-    private func reopen() {
-        guard visibility.clickable else { return }
-        visibility.clickedCapsule()
-        content?.update(state: stateText, error: errorText, expanded: true, clickable: true)
-        if let screen = builtinScreen() { resize(expanded: true, on: screen, duration: 0.25) }
-        if visibility.phase == .grace { scheduleHide(token: visibility.generation) }
+    private func hoverChanged(_ isInside: Bool) {
+        guard visibility.setHovered(isInside), let screen = builtinScreen() else { return }
+        content?.update(state: stateText, error: errorText,
+                        expanded: visibility.expanded, clickable: visibility.clickable)
+        resize(expanded: visibility.expanded, on: screen, duration: 0.22)
     }
 
     private func scheduleHide(token: Int, delay: TimeInterval = 2.5) {
         hideWork?.cancel()
         let item = DispatchWorkItem { [weak self] in
             guard let self, self.visibility.beginDismissal(ifGeneration: token) else { return }
-            self.removeOutsideMonitors()
             self.panel?.ignoresMouseEvents = true
             self.content?.update(state: self.stateText, error: self.errorText,
                                  expanded: false, clickable: false)
@@ -280,31 +254,6 @@ final class NotchController: NSObject {
     private func hidePanel() {
         panel?.ignoresMouseEvents = true
         panel?.orderOut(nil)
-    }
-
-    private func installOutsideMonitors() {
-        guard outsideMonitor == nil, localMonitor == nil else { return }
-        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] event in
-            Task { @MainActor [weak self] in self?.handleOutsideClick(event) }
-        }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
-            Task { @MainActor [weak self] in self?.handleOutsideClick(event) }
-            return event
-        }
-    }
-
-    private func removeOutsideMonitors() {
-        if let monitor = outsideMonitor { NSEvent.removeMonitor(monitor) }
-        if let monitor = localMonitor { NSEvent.removeMonitor(monitor) }
-        outsideMonitor = nil
-        localMonitor = nil
-    }
-
-    private func handleOutsideClick(_ event: NSEvent) {
-        guard visibility.clickable, visibility.expanded, let panel else { return }
-        let point = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
-        if !panel.frame.contains(point) { collapse() }
     }
 
     private func showStatus() {
@@ -340,7 +289,7 @@ final class NotchController: NSObject {
 
 @MainActor
 private final class NotchContentView: NSView {
-    var onCapsuleClick: (() -> Void)?
+    var onHoverChanged: ((Bool) -> Void)?
     var onStop: (() -> Void)?
     var onReplay: (() -> Void)?
     var onStatus: (() -> Void)?
@@ -352,15 +301,14 @@ private final class NotchContentView: NSView {
     private var controls: [NSButton] = []
     private var expanded = false
     private var clickable = false
-    private let capsuleMask = CAShapeLayer()
     var notchDepth: CGFloat = 0 { didSet { needsLayout = true } }
-    var attachmentWidth: CGFloat = 0 { didSet { needsLayout = true } }
+    private var hoverTrackingArea: NSTrackingArea?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor(srgbRed: 0.025, green: 0.03, blue: 0.045, alpha: 0.98).cgColor
-        layer?.mask = capsuleMask
+        layer?.cornerCurve = .continuous
         addSubview(face)
         stateLabel.textColor = .white
         stateLabel.font = .systemFont(ofSize: 11, weight: .medium)
@@ -381,36 +329,24 @@ private final class NotchContentView: NSView {
 
     required init?(coder: NSCoder) { return nil }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        let tracking = NSTrackingArea(rect: .zero,
+                                      options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                      owner: self, userInfo: nil)
+        addTrackingArea(tracking)
+        hoverTrackingArea = tracking
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHoverChanged?(true) }
+    override func mouseExited(with event: NSEvent) { onHoverChanged?(false) }
+
     override func layout() {
         super.layout()
         let visibleHeight = max(24, bounds.height - notchDepth)
-        let radius = min(14, visibleHeight / 2)
-        let shoulderY = min(bounds.height, visibleHeight)
-        let topWidth = min(bounds.width, max(0, attachmentWidth))
-        let topLeft = (bounds.width - topWidth) / 2
-        let topRight = (bounds.width + topWidth) / 2
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: topLeft, y: bounds.height))
-        path.addLine(to: CGPoint(x: topRight, y: bounds.height))
-        path.addCurve(to: CGPoint(x: bounds.width, y: shoulderY),
-                      control1: CGPoint(x: topRight + (bounds.width - topRight) * 0.55, y: bounds.height),
-                      control2: CGPoint(x: bounds.width, y: shoulderY + (bounds.height - shoulderY) * 0.45))
-        path.addLine(to: CGPoint(x: bounds.width, y: radius))
-        path.addQuadCurve(to: CGPoint(x: bounds.width - radius, y: 0),
-                          control: CGPoint(x: bounds.width, y: 0))
-        path.addLine(to: CGPoint(x: radius, y: 0))
-        path.addQuadCurve(to: CGPoint(x: 0, y: radius), control: .zero)
-        path.addLine(to: CGPoint(x: 0, y: shoulderY))
-        path.addCurve(to: CGPoint(x: topLeft, y: bounds.height),
-                      control1: CGPoint(x: 0, y: shoulderY + (bounds.height - shoulderY) * 0.45),
-                      control2: CGPoint(x: topLeft - topLeft * 0.55, y: bounds.height))
-        path.closeSubpath()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        capsuleMask.frame = bounds
-        capsuleMask.path = path
-        CATransaction.commit()
-
+        layer?.cornerRadius = min(18, bounds.height / 2)
+        layer?.masksToBounds = true
         face.frame = NSRect(x: 12, y: (visibleHeight - 24) / 2, width: 24, height: 24)
         stateLabel.frame = NSRect(x: 44, y: (visibleHeight - 16) / 2,
                                   width: expanded ? 105 : max(0, bounds.width - 52), height: 16)
@@ -419,11 +355,6 @@ private final class NotchContentView: NSView {
             button.frame = NSRect(x: x, y: (visibleHeight - 26) / 2, width: width, height: 26)
             x += width + 8
         }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        guard clickable else { return }
-        if !expanded { onCapsuleClick?() }
     }
 
     func update(state: String, error: String?, expanded: Bool, clickable: Bool) {

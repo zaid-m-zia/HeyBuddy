@@ -26,27 +26,46 @@ final class NotchVisibilityTests: XCTestCase {
         XCTAssertEqual(geometry.frame(expanded: true).midX, -640)
     }
 
-    func testHiddenCannotBeClickedUntilActivation() {
+    func testExpandedGeometryKeepsMarginsOnSmallerBuiltInDisplays() {
+        let geometry = NotchGeometry(screenFrame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                     centerX: 400, notchWidth: 180, safeAreaTop: 38)
+        XCTAssertEqual(geometry.expandedSize.width, 480)
+        XCTAssertLessThanOrEqual(geometry.expandedSize.width, geometry.screenFrame.width * 0.60)
+    }
+
+    func testActivationStartsCompactAndHoverAloneExpands() {
         var notch = NotchVisibility()
         XCTAssertFalse(notch.visible)
         XCTAssertFalse(notch.clickable)
-        notch.clickedCapsule()
+        XCTAssertFalse(notch.setHovered(true))
         XCTAssertFalse(notch.expanded)
         notch.activate()
         XCTAssertTrue(notch.visible)
         XCTAssertTrue(notch.clickable)
+        XCTAssertFalse(notch.expanded)
+        XCTAssertTrue(notch.setHovered(true))
         XCTAssertTrue(notch.expanded)
     }
 
-    func testOutsideClickOnlyCollapsesAndCompactClickReopens() {
+    func testHoverExitCollapsesAndReentryExpandsWithoutLeavingActiveState() {
         var notch = NotchVisibility()
         notch.activate()
-        notch.clickedOutside()
+        XCTAssertTrue(notch.setHovered(true))
+        XCTAssertTrue(notch.setHovered(false))
         XCTAssertTrue(notch.visible)
         XCTAssertTrue(notch.clickable)
         XCTAssertFalse(notch.expanded)
-        notch.clickedCapsule()
+        XCTAssertTrue(notch.setHovered(true))
         XCTAssertTrue(notch.expanded)
+    }
+
+    func testHoverDoesNotResetCompletionDismissalTimer() {
+        var notch = NotchVisibility()
+        notch.activate()
+        let hideToken = notch.complete()
+        XCTAssertTrue(notch.setHovered(true))
+        XCTAssertEqual(notch.generation, hideToken)
+        XCTAssertTrue(notch.beginDismissal(ifGeneration: hideToken))
     }
 
     func testCompletionGraceAndStaleDismissal() {
@@ -55,16 +74,15 @@ final class NotchVisibilityTests: XCTestCase {
         let first = notch.complete()
         XCTAssertEqual(notch.phase, .grace)
         XCTAssertTrue(notch.clickable)
-        notch.clickedOutside()
-        XCTAssertFalse(notch.beginDismissal(ifGeneration: first))
-        let second = notch.generation
-        XCTAssertTrue(notch.beginDismissal(ifGeneration: second))
-        XCTAssertFalse(notch.clickable)
-        notch.clickedCapsule()
         XCTAssertFalse(notch.expanded)
-        XCTAssertTrue(notch.finishDismissal(ifGeneration: second))
+        XCTAssertFalse(notch.setHovered(false))
+        XCTAssertTrue(notch.beginDismissal(ifGeneration: first))
+        XCTAssertFalse(notch.clickable)
+        XCTAssertFalse(notch.setHovered(true))
+        XCTAssertFalse(notch.expanded)
+        XCTAssertTrue(notch.finishDismissal(ifGeneration: first))
         XCTAssertFalse(notch.visible)
-        notch.clickedCapsule()
+        XCTAssertFalse(notch.setHovered(true))
         XCTAssertFalse(notch.visible)
     }
 
