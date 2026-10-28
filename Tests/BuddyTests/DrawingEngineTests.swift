@@ -1,0 +1,118 @@
+import XCTest
+import AppKit
+@testable import Buddy
+
+@MainActor
+final class DrawingEngineTests: XCTestCase {
+    private func p(_ x: Double, _ y: Double) -> DrawingPoint { DrawingPoint(x: x, y: y) }
+    private func r(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> DrawingRect {
+        DrawingRect(x: x, y: y, width: w, height: h)
+    }
+    private var mapper: CanvasMapper { CanvasMapper(size: CGSize(width: 800, height: 600)) }
+
+    func testMappingAndBounds() {
+        XCTAssertEqual(mapper.point(p(0, 0)), CGPoint(x: 0, y: 600))
+        XCTAssertEqual(mapper.point(p(1000, 1000)), CGPoint(x: 800, y: 0))
+        XCTAssertEqual(mapper.rect(r(100, 200, 200, 100)), CGRect(x: 80, y: 420, width: 160, height: 60))
+        XCTAssertFalse(p(.nan, 10).isValid)
+        XCTAssertFalse(r(950, 100, 100, 20).isValid)
+        XCTAssertFalse(r(100, 100, 0, 20).isValid)
+    }
+
+    func testValidationRejectsBadElementsIndividually() throws {
+        let json = #"[{"type":"circle","rect":{"x":100,"y":100,"width":200,"height":100}},{"type":"circle","rect":{"x":-3,"y":100,"width":200,"height":100}},{"type":"unknown","point":{"x":200,"y":200}}]"#
+        let decoded = try JSONDecoder().decode([DrawingElement].self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.count, 3)
+        XCTAssertEqual(decoded.filter(\.isValid).count, 1)
+        let rendered = DrawingRenderer().render(decoded, mapper: mapper, backingScale: 2)
+        XCTAssertEqual(rendered.count, 1)
+        let mixed = #"{"say":"Keep speaking","drawings":[17,{"type":"circle","rect":{"x":100,"y":100,"width":200,"height":100}}]}"#
+        let step = try JSONDecoder().decode(Step.self, from: Data(mixed.utf8))
+        XCTAssertEqual(step.say, "Keep speaking")
+        XCTAssertEqual(step.drawings?.count, 1)
+    }
+
+    func testOutlineHighlightAndSpotlightStyles() {
+        let elements = [
+            DrawingElement(kind: .rect, geometry: .rect(r(100, 100, 200, 100))),
+            DrawingElement(kind: .highlight, geometry: .rect(r(100, 220, 200, 45))),
+            DrawingElement(kind: .spotlight, geometry: .rect(r(100, 320, 200, 100)))
+        ]
+        let layers = DrawingRenderer().render(elements, mapper: mapper, backingScale: 2)
+        XCTAssertEqual(layers.count, 3)
+        let outline = layers[0].layer as? CAShapeLayer
+        XCTAssertNil(outline?.fillColor)
+        XCTAssertEqual(outline?.contentsScale, 2)
+        XCTAssertEqual(layers[1].layer.backgroundColor?.alpha ?? -1, 0.25, accuracy: 0.001)
+        let spotlight = layers[2].layer as? CAShapeLayer
+        XCTAssertEqual(spotlight?.fillRule, .evenOdd)
+        XCTAssertEqual(spotlight?.fillColor?.alpha ?? -1, 0.55, accuracy: 0.001)
+    }
+
+    func testGeometryAndLabelPlacement() {
+        let shapes = [
+            DrawingElement(kind: .arrow, geometry: .segment(p(100, 100), p(300, 300))),
+            DrawingElement(kind: .curvedArrow, geometry: .cubic(p(100, 100), p(150, 50), p(250, 350), p(300, 300))),
+            DrawingElement(kind: .regularPolygon, geometry: .regularPolygon(r(400, 200, 100, 100), 5)),
+            DrawingElement(kind: .brace, geometry: .rect(r(600, 200, 30, 200)))
+        ]
+        let layers = DrawingRenderer().render(shapes, mapper: mapper, backingScale: 1)
+        XCTAssertEqual(layers.count, 4)
+        XCTAssertEqual(layers[0].layer.sublayers?.count, 2) // shaft, then head
+        XCTAssertNotNil((layers[2].layer as? CAShapeLayer)?.path)
+
+        var placer = DrawingLabelPlacer(canvas: CGRect(x: 0, y: 0, width: 400, height: 300))
+        let first = placer.place(near: CGPoint(x: 390, y: 290), size: CGSize(width: 120, height: 28))
+        let second = placer.place(near: CGPoint(x: 390, y: 290), size: CGSize(width: 120, height: 28))
+        XCTAssertTrue(CGRect(x: 0, y: 0, width: 400, height: 300).contains(first))
+        XCTAssertTrue(CGRect(x: 0, y: 0, width: 400, height: 300).contains(second))
+        XCTAssertTrue(first.intersection(second).isNull)
+    }
+
+    func testSerializationAndPerStepLimit() throws {
+        let element = DrawingElement(id: "curve-1", kind: .curve,
+                                     geometry: .cubic(p(100, 100), p(150, 80), p(230, 300), p(300, 300)),
+                                     duration: 0.4, order: 2, purpose: "show direction")
+        let decoded = try JSONDecoder().decode(DrawingElement.self, from: JSONEncoder().encode(element))
+        XCTAssertEqual(decoded.id, "curve-1")
+        XCTAssertTrue(decoded.isValid)
+        let many = (0..<12).map { index in
+            DrawingElement(id: "mark-\(index)", kind: .circle,
+                           geometry: .rect(r(Double(index * 30), 100, 25, 25)))
+        }
+        XCTAssertEqual(DrawingRenderer().render(many, mapper: mapper, backingScale: 2).count, 8)
+    }
+
+    func testLegacyPlanAndLayerLifecycle() throws {
+        _ = NSApplication.shared
+        let old = #"{"steps":[{"say":"Hello","annotations":[{"type":"circle","box_2d":[100,200,300,400]}]}]}"#
+        let plan = try JSONDecoder().decode(Plan.self, from: Data(old.utf8))
+        let step = try XCTUnwrap(plan.steps?.first)
+        let overlay = Overlay(frame: CGRect(x: 100, y: 100, width: 400, height: 300))
+        overlay.showAnnotations(for: step, stepIndex: 0)
+        overlay.showAnnotations(for: step, stepIndex: 0)
+        XCTAssertEqual(overlay.activeDrawingCount, 1)
+        overlay.cancel()
+        XCTAssertEqual(overlay.activeDrawingCount, 0)
+
+        let spotlight = Step(say: "Focus", cue: nil, focus: nil, annotations: nil, keep: false,
+                             drawings: [DrawingElement(kind: .spotlight, geometry: .rect(r(100, 100, 300, 300)))])
+        overlay.showAnnotations(for: spotlight, stepIndex: 1)
+        XCTAssertEqual(overlay.activeSpotlightCount, 1)
+        overlay.finishStep(spotlight, stepIndex: 1)
+        XCTAssertEqual(overlay.activeSpotlightCount, 0)
+        overlay.cancel()
+        XCTAssertEqual(overlay.activeDrawingCount, 0)
+    }
+
+    func testStaleFinishCannotHideNewPresentation() async {
+        _ = NSApplication.shared
+        let overlay = Overlay(frame: CGRect(x: 100, y: 100, width: 400, height: 300))
+        let stale = expectation(description: "stale completion")
+        stale.isInverted = true
+        overlay.finishPresentation { stale.fulfill() }
+        overlay.beginPresentation()
+        await fulfillment(of: [stale], timeout: 0.5)
+        overlay.hide()
+    }
+}

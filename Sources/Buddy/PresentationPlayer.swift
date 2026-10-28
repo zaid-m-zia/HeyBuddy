@@ -67,9 +67,8 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
 
             // Compute cue offset
             if let cue = step.cue, !cue.isEmpty,
-               let range = text.range(of: cue, options: .caseInsensitive) {
-                let offset = text.distance(from: text.startIndex, to: range.lowerBound)
-                cueOffsetsByStep[idx] = offset
+               text.range(of: cue, options: .caseInsensitive) != nil {
+                cueOffsetsByStep[idx] = (text as NSString).range(of: cue, options: .caseInsensitive).location
             }
 
             utterances.append(u)
@@ -93,6 +92,7 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
         cueOffsetsByStep.removeAll()
         triggeredCues.removeAll()
         completionHandler = nil
+        overlay?.cancel()
     }
 
     // -------------------------------------------------------------------------
@@ -126,7 +126,7 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, self.stepIndicesByUtterance[utterance] != nil else { return }
             self.cancel()
         }
     }
@@ -175,6 +175,7 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
             overlay?.finishStep(step, stepIndex: idx)
         } else {
             // Last step: hold final annotations for 2.5s before cleanup
+            overlay?.finishStep(step, stepIndex: idx, preserveAnnotations: true)
             let gen = self.generation
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
                 guard let self, self.generation == gen else { return }

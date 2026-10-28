@@ -54,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let brain   = Brain()
     let voice   = AVSpeechSynthesizer()
     lazy var player = PresentationPlayer(overlay: overlay)
+    private var drawingDemo: DrawingDemoController?
 
     // MARK: UI
     var statusItem: NSStatusItem!
@@ -72,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: In-flight request (Stage 2)
     private var requestTask: Task<Void, Never>?
+    private var interactionGeneration = 0
 
     // MARK: Concurrent screenshot task (Stage 5)
     private var screenshotTask: Task<CaptureResult, Error>?
@@ -115,9 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return e
         }
 
-        // Stage 6: pre-warm the Gemini connection and validate model names.
-        brain.preWarm()
-        brain.validateModelsAsync()
+        // Discovery runs on the first request or an explicit health check.
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -135,10 +135,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.title = "◎"
         let menu = NSMenu()
 
-        let t = menu.addItem(withTitle: "Test API", action: #selector(testAPI), keyEquivalent: "t")
+        let t = menu.addItem(withTitle: "Health Check…", action: #selector(testAPI), keyEquivalent: "t")
         t.target = self
 
-        let d = menu.addItem(withTitle: "Demo Annotations", action: #selector(demoAnnotations), keyEquivalent: "d")
+        let c = menu.addItem(withTitle: "Copy Diagnostics", action: #selector(copyDiagnostics), keyEquivalent: "")
+        c.target = self
+
+        let d = menu.addItem(withTitle: "Drawing Demo…", action: #selector(demoAnnotations), keyEquivalent: "d")
         d.target = self
 
         let p = menu.addItem(withTitle: "Fix Permissions…", action: #selector(fixPermissions), keyEquivalent: "")
@@ -165,92 +168,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func testAPI() {
         NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "Testing Gemini API…"
-        alert.informativeText = "Sending test ping to all configured models..."
-        alert.addButton(withTitle: "OK")
-
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let results = await self.brain.testAllModels()
-            let report = results.map { r -> String in
-                if r.statusCode == 200 {
-                    return "• \(r.model): HTTP 200 (\(r.latencyMs) ms) ✓"
-                } else if r.statusCode > 0 {
-                    let desc = r.statusCode == 503 ? " (Busy/503)" : ""
-                    return "• \(r.model): HTTP \(r.statusCode) (\(r.latencyMs) ms)\(desc)"
-                } else {
-                    return "• \(r.model): \(r.error ?? "Failed") (\(r.latencyMs) ms)"
+            do {
+                let report = try await self.brain.healthCheck()
+                let alert = NSAlert()
+                alert.messageText = "Gemini Health Check"
+                alert.informativeText = report
+                alert.addButton(withTitle: "Done")
+                alert.addButton(withTitle: "Test one generation")
+                if alert.runModal() == .alertSecondButtonReturn {
+                    let result = try await self.brain.testGeneration()
+                    let resultAlert = NSAlert()
+                    resultAlert.messageText = "Generation Test"
+                    resultAlert.informativeText = result
+                    resultAlert.runModal()
                 }
-            }.joined(separator: "\n")
-
-            let resAlert = NSAlert()
-            resAlert.messageText = "Gemini API Test Results"
-            resAlert.informativeText = report
-            resAlert.addButton(withTitle: "OK")
-            resAlert.runModal()
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Gemini Health Check Failed"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+            }
         }
+    }
+
+    @objc func copyDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(brain.diagnostics, forType: .string)
     }
 
     @objc func demoAnnotations() {
         guard state == .idle else { return }
-        blogInfo("[DEMO] Starting annotation demo")
-        let demoSteps: [Step] = [
-            Step(
-                say: "Welcome to HeyBuddy! Watch the pointer fly to the center of your screen.",
-                cue: nil,
-                focus: [500, 500],
-                annotations: [
-                    Annotation(type: "circle", point: nil, box_2d: [420, 420, 580, 580], from: nil, to: nil, points: nil, label: "Center Focus", text: nil),
-                    Annotation(type: "label", point: [500, 500], box_2d: nil, from: nil, to: nil, points: nil, label: nil, text: "Center Focus")
-                ],
-                keep: false
-            ),
-            Step(
-                say: "I can point out buttons, draw rectangles, and highlight key details.",
-                cue: "rectangles",
-                focus: [250, 300],
-                annotations: [
-                    Annotation(type: "rect", point: nil, box_2d: [200, 200, 300, 400], from: nil, to: nil, points: nil, label: nil, text: nil),
-                    Annotation(type: "highlight", point: nil, box_2d: [350, 200, 420, 400], from: nil, to: nil, points: nil, label: nil, text: nil),
-                    Annotation(type: "badge", point: [200, 200], box_2d: nil, from: nil, to: nil, points: nil, label: nil, text: "1")
-                ],
-                keep: false
-            ),
-            Step(
-                say: "Arrows can show flow from here all the way to there, with connections.",
-                cue: "here all the way to there",
-                focus: [300, 700],
-                annotations: [
-                    Annotation(type: "arrow", point: nil, box_2d: nil, from: [300, 600], to: [300, 800], points: nil, label: nil, text: nil),
-                    Annotation(type: "line", point: nil, box_2d: nil, from: nil, to: nil, points: [[400, 600], [400, 800]], label: nil, text: nil),
-                    Annotation(type: "underline", point: nil, box_2d: [450, 600, 480, 800], from: nil, to: nil, points: nil, label: nil, text: nil)
-                ],
-                keep: false
-            ),
-            Step(
-                say: "Polygons map irregular regions, while spotlights dim everything to focus on what matters.",
-                cue: "spotlights dim everything",
-                focus: [700, 500],
-                annotations: [
-                    Annotation(type: "polygon", point: nil, box_2d: nil, from: nil, to: nil, points: [[650, 350], [620, 450], [700, 500], [750, 420], [720, 340]], label: nil, text: nil),
-                    Annotation(type: "spotlight", point: nil, box_2d: [600, 600, 800, 850], from: nil, to: nil, points: nil, label: nil, text: nil),
-                    Annotation(type: "badge", point: [600, 600], box_2d: nil, from: nil, to: nil, points: nil, label: nil, text: "★")
-                ],
-                keep: false
-            ),
-            Step(
-                say: "Everything stays perfectly in sync with what I say, and cleans up when finished!",
-                cue: nil,
-                focus: [500, 500],
-                annotations: [
-                    Annotation(type: "ellipse", point: nil, box_2d: [450, 350, 550, 650], from: nil, to: nil, points: nil, label: nil, text: nil),
-                    Annotation(type: "label", point: [500, 500], box_2d: nil, from: nil, to: nil, points: nil, label: nil, text: "Synced Annotations ✓")
-                ],
-                keep: false
-            )
-        ]
-        present(Plan(steps: demoSteps, actions: nil, say: nil, points: nil))
+        drawingDemo?.stop()
+        let demo = DrawingDemoController()
+        drawingDemo = demo
+        demo.show()
     }
 
     // -------------------------------------------------------------------------
@@ -267,7 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         nameField.placeholderString = "Assistant name (e.g. Nova)"
         nameField.stringValue = Settings.name
 
-        let keyField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        let keyField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         keyField.placeholderString = "Gemini API key"
         keyField.stringValue = Settings.apiKey
 
@@ -276,11 +229,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         container.addSubview(keyField)
         alert.accessoryView = container
         alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Save & Test Connection")
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            Settings.name   = nameField.stringValue.trimmingCharacters(in: .whitespaces)
-            Settings.apiKey = keyField.stringValue.trimmingCharacters(in: .whitespaces)
-            blogInfo("[SETTINGS] updated name='\(Settings.name)' key=<\(Settings.apiKey.isEmpty ? "empty" : "set")>")
+        let choice = alert.runModal()
+        if choice == .alertFirstButtonReturn || choice == .alertSecondButtonReturn {
+            do {
+                try Settings.saveAPIKey(keyField.stringValue)
+                Settings.name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
+                blogInfo("[SETTINGS] updated name; API key saved")
+                if choice == .alertSecondButtonReturn { testAPI() }
+            } catch {
+                let badKey = NSAlert()
+                badKey.messageText = "Check the Gemini API key"
+                badKey.informativeText = "Paste the key from Google AI Studio without spaces or extra text."
+                badKey.runModal()
+            }
         }
     }   // ← This brace was MISSING in the original (BUG-01 fix).
 
@@ -361,6 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard permissionsReady() else { return }
 
         RequestClock.shared.reset()
+        interactionGeneration += 1
         blogInfo("[KEY] \(RequestClock.shared.elapsed) Control+Option pressed → listening")
 
         voice.stopSpeaking(at: .immediate)
@@ -404,10 +368,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         transition(to: .processing)
 
         let gestureDesc = describeGesture()
+        let generation = interactionGeneration
+        let captureTask = screenshotTask
 
         // Stage 2: the request runs in a stored Task so it can be cancelled.
         requestTask = Task { [weak self] in
-            await self?.runRequest(gesture: gestureDesc)
+            await self?.runRequest(gesture: gestureDesc, generation: generation, captureTask: captureTask)
         }
 
         // Stage 2: watchdog – if processing/presenting exceeds 30 s, abort.
@@ -431,10 +397,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Request pipeline (Stages 1, 2, 5)
     // -------------------------------------------------------------------------
 
-    private func runRequest(gesture: String) async {
+    private func runRequest(gesture: String, generation: Int, captureTask: Task<CaptureResult, Error>?) async {
         // Stage 4: await the final transcript.
         let rawText = await ears.stop()
-        blogInfo("[EARS] \(RequestClock.shared.elapsed) transcript='\(rawText)'")
+        guard !Task.isCancelled, generation == interactionGeneration else { return }
+        blogInfo("[EARS] \(RequestClock.shared.elapsed) transcript ready")
 
         var text = rawText
         let prefix = "hey \(Settings.name.lowercased())"
@@ -446,9 +413,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if text.trimmingCharacters(in: .whitespaces).isEmpty {
             blogInfo("[EARS] empty transcript – giving feedback")
             await MainActor.run { [weak self] in
-                self?.say("I didn't catch that. Hold Control and Option, then speak.")
-                self?.overlay.setLabel("didn't catch that")
-                self?.finish()
+                guard let self, generation == self.interactionGeneration else { return }
+                self.say("I didn't catch that. Hold Control and Option, then speak.")
+                self.overlay.setLabel("didn't catch that")
+                self.finish()
             }
             return
         }
@@ -456,8 +424,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Stage 5: await the screenshot task that started at key press.
         let capture: CaptureResult
         do {
-            if let st = screenshotTask {
+            if let st = captureTask {
                 capture = try await st.value
+                guard !Task.isCancelled, generation == interactionGeneration else { return }
                 screenshotTask = nil
             } else {
                 // Fallback: capture now (shouldn't normally happen).
@@ -466,13 +435,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             // Update overlay to use same display as screenshot.
             await MainActor.run { [weak self] in
-                self?.overlay.setDisplayFrame(capture.displayFrame)
+                guard let self, generation == self.interactionGeneration else { return }
+                self.overlay.setDisplayFrame(capture.displayFrame)
             }
         } catch {
             // Screenshot failure: proceed with a clear spoken message.
             blogError("[SCREEN] capture failed: \(error.localizedDescription)")
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                guard generation == self.interactionGeneration, !Task.isCancelled else { return }
                 self.say("I can't see the screen. Check Screen Recording permission and try again.")
                 self.overlay.setLabel("screen capture failed")
                 self.finish()
@@ -485,17 +456,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let plan: Plan
         do {
             try Task.checkCancellation()
+            guard generation == interactionGeneration else { return }
             plan = try await brain.ask(text: text, image: capture.jpeg, gesture: gesture)
         } catch is CancellationError {
             blogInfo("[BRAIN] request cancelled")
-            await MainActor.run { [weak self] in self?.finish() }
             return
         } catch {
             blogError("[BRAIN] error: \(error.localizedDescription)")
             await MainActor.run { [weak self] in
-                self?.say(error.localizedDescription)
-                self?.overlay.setLabel("error")
-                self?.finish()
+                guard let self, generation == self.interactionGeneration, !Task.isCancelled else { return }
+                self.say(error.localizedDescription)
+                self.overlay.setLabel("error")
+                self.finish()
             }
             return
         }
@@ -503,7 +475,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Hand off to the presentation phase on the main actor.
         // finish() will be called when presentation finishes (speech + animations).
         await MainActor.run { [weak self] in
-            self?.present(plan)
+            guard let self, generation == self.interactionGeneration, !Task.isCancelled else { return }
+            self.present(plan)
         }
     }
 
@@ -531,6 +504,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // -------------------------------------------------------------------------
 
     private func finish() {
+        interactionGeneration += 1
         disarmWatchdog()
         requestTask = nil
         screenshotTask?.cancel()

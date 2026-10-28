@@ -21,7 +21,11 @@ final class Overlay {
 
     // Track active annotation layers per step so they can be selectively faded
     private var activeStepLayers: [Int: [CALayer]] = [:]
+    private var activeStepSpotlights: [Int: [CALayer]] = [:]
     private var allActiveLayers: [CALayer] = []
+    private var shownSteps: Set<Int> = []
+    private var presentationGeneration = 0
+    private let drawingRenderer = DrawingRenderer()
 
     // Stored display frame from the last capture (used for coordinate mapping)
     private var displayFrame: CGRect
@@ -29,8 +33,8 @@ final class Overlay {
     // Maximum simultaneous active annotation layers to prevent runaway GPU load
     private let maxSimultaneousLayers = 24
 
-    init() {
-        let f = NSScreen.screens.first?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+    init(frame: CGRect? = nil) {
+        let f = frame ?? NSScreen.screens.first?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         displayFrame = f
 
         win = NSPanel(
@@ -67,6 +71,7 @@ final class Overlay {
         pointerTri.shadowOpacity = 0.9
         pointerTri.shadowRadius  = 6
         pointerTri.shadowOffset  = .zero
+        pointerTri.contentsScale = win.backingScaleFactor
 
         pointerLabel.fontSize        = 13
         pointerLabel.foregroundColor = NSColor.white.cgColor
@@ -74,7 +79,7 @@ final class Overlay {
         pointerLabel.cornerRadius    = 6
         pointerLabel.alignmentMode   = .center
         pointerLabel.truncationMode  = .end
-        pointerLabel.contentsScale   = 2
+        pointerLabel.contentsScale   = win.backingScaleFactor
         pointerLabel.isHidden        = true
 
         pointer.addSublayer(pointerTri)
@@ -93,27 +98,16 @@ final class Overlay {
     ///   x_local = (xNorm / 1000.0) * width
     ///   y_local = height - (yNorm / 1000.0) * height
     func mapPoint(yNorm: Double, xNorm: Double) -> CGPoint {
-        let w = displayFrame.width
-        let h = displayFrame.height
-        let clampedX = max(0.0, min(1000.0, xNorm))
-        let clampedY = max(0.0, min(1000.0, yNorm))
-        return CGPoint(
-            x: (clampedX / 1000.0) * w,
-            y: h - (clampedY / 1000.0) * h
-        )
+        let point = DrawingPoint(x: xNorm, y: yNorm)
+        guard point.isValid else { return pointer.position }
+        return CanvasMapper(size: displayFrame.size).point(point)
     }
 
     func mapBox(_ box: [Double]) -> CGRect {
-        guard box.count >= 4 else { return .zero }
-        let ymin = box[0], xmin = box[1], ymax = box[2], xmax = box[3]
-        let pTopLeft = mapPoint(yNorm: ymin, xNorm: xmin)
-        let pBottomRight = mapPoint(yNorm: ymax, xNorm: xmax)
-        return CGRect(
-            x: min(pTopLeft.x, pBottomRight.x),
-            y: min(pTopLeft.y, pBottomRight.y),
-            width: max(8, abs(pBottomRight.x - pTopLeft.x)),
-            height: max(8, abs(pTopLeft.y - pBottomRight.y))
-        )
+        guard box.count == 4 else { return .zero }
+        let rect = DrawingRect(x: box[1], y: box[0], width: box[3] - box[1], height: box[2] - box[0])
+        guard rect.isValid else { return .zero }
+        return CanvasMapper(size: displayFrame.size).rect(rect)
     }
 
     // -------------------------------------------------------------------------
@@ -159,6 +153,7 @@ final class Overlay {
     }
 
     func hide() {
+        presentationGeneration += 1
         follow = false
         followTimer?.invalidate()
         followTimer = nil
@@ -169,11 +164,12 @@ final class Overlay {
     }
 
     func cancel() {
-        removeAllLayers()
         hide()
     }
 
     func beginPresentation() {
+        presentationGeneration += 1
+        removeAllLayers()
         follow = false
         followTimer?.invalidate()
         followTimer = nil
@@ -188,8 +184,11 @@ final class Overlay {
     func startStep(_ step: Step, stepIndex: Int) {
         // Fly pointer to focus
         let targetPoint: CGPoint
-        if let f = step.focus, f.count >= 2 {
+        if let f = step.focus, f.count == 2,
+           DrawingPoint(x: f[1], y: f[0]).isValid {
             targetPoint = mapPoint(yNorm: f[0], xNorm: f[1])
+        } else if let drawing = step.drawings?.first(where: { $0.isValid }), let anchor = drawing.anchor {
+            targetPoint = CanvasMapper(size: displayFrame.size).point(anchor)
         } else if let firstAnnot = step.annotations?.first {
             targetPoint = anchorForAnnotation(firstAnnot)
         } else {
@@ -200,37 +199,55 @@ final class Overlay {
     }
 
     func showAnnotations(for step: Step, stepIndex: Int) {
-        guard let annotations = step.annotations, !annotations.isEmpty else { return }
+        guard shownSteps.insert(stepIndex).inserted else { return }
+        let elements = step.drawings ?? (step.annotations ?? []).compactMap(DrawingElement.legacy)
+        guard !elements.isEmpty else { return }
         var stepLayers: [CALayer] = []
-
-        for annot in annotations {
-            if let layer = createAnnotationLayer(annot) {
-                enforceLayerCap()
-                root.layer?.insertSublayer(layer, below: pointer)
-                stepLayers.append(layer)
-                allActiveLayers.append(layer)
+        let rendered = drawingRenderer.render(elements, mapper: CanvasMapper(size: displayFrame.size),
+                                              backingScale: win.backingScaleFactor)
+        for item in rendered {
+            enforceLayerCap()
+            root.layer?.insertSublayer(item.layer, below: pointer)
+            stepLayers.append(item.layer)
+            allActiveLayers.append(item.layer)
+            if item.isSpotlight {
+                activeStepSpotlights[stepIndex, default: []].append(item.layer)
             }
         }
 
         activeStepLayers[stepIndex] = (activeStepLayers[stepIndex] ?? []) + stepLayers
     }
 
-    func finishStep(_ step: Step, stepIndex: Int) {
-        guard step.keep != true else { return }
+    func finishStep(_ step: Step, stepIndex: Int, preserveAnnotations: Bool = false) {
+        // Spotlights must never dim the next step, even when other annotations are kept.
+        let spotlights = activeStepSpotlights.removeValue(forKey: stepIndex) ?? []
+        for spotlight in spotlights {
+            spotlight.removeFromSuperlayer()
+            allActiveLayers.removeAll { $0 === spotlight }
+        }
+        if !spotlights.isEmpty {
+            activeStepLayers[stepIndex]?.removeAll { layer in spotlights.contains { $0 === layer } }
+        }
+        guard !preserveAnnotations, step.keep != true else { return }
         // Fade out annotations 0.4s after step speech finishes
+        let generation = presentationGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self, let layers = self.activeStepLayers.removeValue(forKey: stepIndex) else { return }
+            guard let self, self.presentationGeneration == generation,
+                  let layers = self.activeStepLayers.removeValue(forKey: stepIndex) else { return }
+            self.allActiveLayers.removeAll { candidate in layers.contains { $0 === candidate } }
             self.fadeAndRemoveLayers(layers)
         }
     }
 
     func finishPresentation(done: @escaping () -> Void) {
+        let generation = presentationGeneration
         fadeAndRemoveLayers(allActiveLayers)
         allActiveLayers.removeAll()
         activeStepLayers.removeAll()
+        activeStepSpotlights.removeAll()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            guard let self else { return }
+            guard let self, self.presentationGeneration == generation else { return }
             self.hide()
             done()
         }
@@ -251,9 +268,8 @@ final class Overlay {
         pointer.position = target
         CATransaction.commit()
 
-        if let lbl = label, !lbl.isEmpty {
-            setLabel(lbl)
-        }
+        let cleanedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        setLabel(cleanedLabel)
     }
 
     private func anchorForAnnotation(_ a: Annotation) -> CGPoint {
@@ -274,262 +290,41 @@ final class Overlay {
     // MARK: Annotation Layer Factory
     // -------------------------------------------------------------------------
 
-    private func createAnnotationLayer(_ a: Annotation) -> CALayer? {
-        let pink = NSColor.systemPink.cgColor
-        let blue = NSColor.systemBlue.cgColor
-
-        switch a.type.lowercased() {
-        case "circle", "ellipse":
-            guard let b = a.box_2d, b.count >= 4 else { return nil }
-            let rect = mapBox(b)
-            let layer = CAShapeLayer()
-            layer.path = CGPath(ellipseIn: rect, transform: nil)
-            styleStrokeLayer(layer, color: pink)
-            animateStroke(layer)
-            return layer
-
-        case "rect":
-            guard let b = a.box_2d, b.count >= 4 else { return nil }
-            let rect = mapBox(b)
-            let layer = CAShapeLayer()
-            layer.path = CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil)
-            styleStrokeLayer(layer, color: pink)
-            animateStroke(layer)
-            return layer
-
-        case "arrow":
-            guard let from = a.from, let to = a.to, from.count >= 2, to.count >= 2 else { return nil }
-            let p1 = mapPoint(yNorm: from[0], xNorm: from[1])
-            let p2 = mapPoint(yNorm: to[0], xNorm: to[1])
-            let path = CGMutablePath()
-            path.move(to: p1)
-            path.addLine(to: p2)
-
-            // Add arrowhead at p2
-            let angle = atan2(p2.y - p1.y, p2.x - p1.x)
-            let arrowLength: CGFloat = 16
-            let arrowAngle: CGFloat = .pi / 6
-            let left = CGPoint(x: p2.x - arrowLength * cos(angle - arrowAngle),
-                               y: p2.y - arrowLength * sin(angle - arrowAngle))
-            let right = CGPoint(x: p2.x - arrowLength * cos(angle + arrowAngle),
-                                y: p2.y - arrowLength * sin(angle + arrowAngle))
-            path.move(to: left)
-            path.addLine(to: p2)
-            path.addLine(to: right)
-
-            let layer = CAShapeLayer()
-            layer.path = path
-            styleStrokeLayer(layer, color: pink)
-            animateStroke(layer)
-            return layer
-
-        case "line", "polyline":
-            guard let pts = a.points, pts.count >= 2 else { return nil }
-            let path = CGMutablePath()
-            for (i, p) in pts.enumerated() {
-                guard p.count >= 2 else { continue }
-                let pt = mapPoint(yNorm: p[0], xNorm: p[1])
-                if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
-            }
-            let layer = CAShapeLayer()
-            layer.path = path
-            styleStrokeLayer(layer, color: pink)
-            animateStroke(layer)
-            return layer
-
-        case "polygon":
-            guard let pts = a.points, pts.count >= 3 else { return nil }
-            let path = CGMutablePath()
-            for (i, p) in pts.enumerated() {
-                guard p.count >= 2 else { continue }
-                let pt = mapPoint(yNorm: p[0], xNorm: p[1])
-                if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
-            }
-            path.closeSubpath()
-            let layer = CAShapeLayer()
-            layer.path = path
-            layer.fillColor = NSColor.systemPink.withAlphaComponent(0.12).cgColor
-            styleStrokeLayer(layer, color: pink)
-            animateStroke(layer)
-            return layer
-
-        case "underline":
-            guard let b = a.box_2d, b.count >= 4 else { return nil }
-            let rect = mapBox(b)
-            let path = CGMutablePath()
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY - 2))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY - 2))
-            let layer = CAShapeLayer()
-            layer.path = path
-            styleStrokeLayer(layer, color: pink)
-            animateStroke(layer)
-            return layer
-
-        case "highlight":
-            guard let b = a.box_2d, b.count >= 4 else { return nil }
-            let rect = mapBox(b)
-            let layer = CALayer()
-            layer.frame = rect
-            layer.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.30).cgColor
-            layer.cornerRadius = 6
-            animateFadeIn(layer)
-            return layer
-
-        case "spotlight":
-            guard let b = a.box_2d, b.count >= 4 else { return nil }
-            let rect = mapBox(b)
-            let fullRect = CGRect(origin: .zero, size: displayFrame.size)
-
-            let maskPath = CGMutablePath()
-            maskPath.addRect(fullRect)
-            maskPath.addRoundedRect(in: rect, cornerWidth: 10, cornerHeight: 10)
-
-            let layer = CAShapeLayer()
-            layer.frame = fullRect
-            layer.path = maskPath
-            layer.fillRule = .evenOdd
-            layer.fillColor = NSColor.black.withAlphaComponent(0.65).cgColor
-            animateFadeIn(layer)
-            return layer
-
-        case "badge":
-            guard let p = a.point, p.count >= 2 else { return nil }
-            let pt = mapPoint(yNorm: p[0], xNorm: p[1])
-            let text = a.text ?? a.label ?? "•"
-
-            let container = CALayer()
-            container.frame = CGRect(x: pt.x - 14, y: pt.y - 14, width: 28, height: 28)
-            container.backgroundColor = pink
-            container.cornerRadius = 14
-            container.shadowColor = pink
-            container.shadowOpacity = 0.8
-            container.shadowRadius = 4
-            container.shadowOffset = .zero
-
-            let textLayer = CATextLayer()
-            textLayer.string = text
-            textLayer.fontSize = 14
-            textLayer.alignmentMode = .center
-            textLayer.foregroundColor = NSColor.white.cgColor
-            textLayer.contentsScale = 2
-            textLayer.frame = CGRect(x: 0, y: 4, width: 28, height: 20)
-            container.addSublayer(textLayer)
-
-            animatePop(container)
-            return container
-
-        case "label":
-            guard let p = a.point, p.count >= 2 else { return nil }
-            let pt = mapPoint(yNorm: p[0], xNorm: p[1])
-            let text = a.text ?? a.label ?? ""
-            let w = min(CGFloat(text.count) * 8.5 + 24, 320)
-            let h: CGFloat = 26
-
-            // Clamp bubble inside screen
-            let clampedX = min(max(pt.x - w / 2, 10), displayFrame.width - w - 10)
-            let clampedY = min(max(pt.y + 12, 10), displayFrame.height - h - 10)
-
-            let container = CALayer()
-            container.frame = CGRect(x: clampedX, y: clampedY, width: w, height: h)
-            container.backgroundColor = NSColor.black.withAlphaComponent(0.85).cgColor
-            container.cornerRadius = 8
-            container.borderColor = NSColor.white.withAlphaComponent(0.3).cgColor
-            container.borderWidth = 1
-
-            let textLayer = CATextLayer()
-            textLayer.string = text
-            textLayer.fontSize = 12
-            textLayer.alignmentMode = .center
-            textLayer.foregroundColor = NSColor.white.cgColor
-            textLayer.contentsScale = 2
-            textLayer.frame = CGRect(x: 4, y: 5, width: w - 8, height: 16)
-            container.addSublayer(textLayer)
-
-            animatePop(container)
-            return container
-
-        case "pointer":
-            // Standard pointer target circle
-            guard let p = a.point, p.count >= 2 else { return nil }
-            let pt = mapPoint(yNorm: p[0], xNorm: p[1])
-            let layer = CAShapeLayer()
-            layer.path = CGPath(ellipseIn: CGRect(x: pt.x - 24, y: pt.y - 24, width: 48, height: 48), transform: nil)
-            styleStrokeLayer(layer, color: blue)
-            animateStroke(layer)
-            return layer
-
-        default:
-            return nil
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // MARK: Styling & Animations
-    // -------------------------------------------------------------------------
-
-    private func styleStrokeLayer(_ layer: CAShapeLayer, color: CGColor) {
-        layer.fillColor = layer.fillColor ?? nil
-        layer.strokeColor = color
-        layer.lineWidth = 4
-        layer.lineCap = .round
-        layer.lineJoin = .round
-        layer.shadowColor = color
-        layer.shadowRadius = 4
-        layer.shadowOpacity = 0.8
-        layer.shadowOffset = .zero
-    }
-
-    private func animateStroke(_ layer: CAShapeLayer) {
-        let anim = CABasicAnimation(keyPath: "strokeEnd")
-        anim.fromValue = 0.0
-        anim.toValue = 1.0
-        anim.duration = 0.35
-        anim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer.add(anim, forKey: "stroke")
-    }
-
-    private func animateFadeIn(_ layer: CALayer) {
-        let anim = CABasicAnimation(keyPath: "opacity")
-        anim.fromValue = 0.0
-        anim.toValue = 1.0
-        anim.duration = 0.35
-        layer.add(anim, forKey: "fade")
-    }
-
-    private func animatePop(_ layer: CALayer) {
-        let anim = CASpringAnimation(keyPath: "transform.scale")
-        anim.fromValue = 0.4
-        anim.toValue = 1.0
-        anim.damping = 12
-        anim.initialVelocity = 4
-        anim.duration = anim.settlingDuration
-        layer.add(anim, forKey: "pop")
-    }
-
     private func fadeAndRemoveLayers(_ layers: [CALayer]) {
-        for l in layers {
+        for layer in layers {
             CATransaction.begin()
-            CATransaction.setAnimationDuration(0.35)
-            CATransaction.setCompletionBlock {
-                l.removeFromSuperlayer()
-            }
-            l.opacity = 0.0
+            CATransaction.setAnimationDuration(0.30)
+            CATransaction.setCompletionBlock { layer.removeFromSuperlayer() }
+            layer.opacity = 0
             CATransaction.commit()
         }
     }
 
     private func removeAllLayers() {
-        for l in allActiveLayers {
-            l.removeFromSuperlayer()
+        for layer in allActiveLayers {
+            layer.removeAllAnimations()
+            layer.removeFromSuperlayer()
         }
         allActiveLayers.removeAll()
         activeStepLayers.removeAll()
+        activeStepSpotlights.removeAll()
+        shownSteps.removeAll()
     }
+
+    var activeDrawingCount: Int { allActiveLayers.count }
+    var activeSpotlightCount: Int { activeStepSpotlights.values.reduce(0) { $0 + $1.count } }
 
     private func enforceLayerCap() {
         while allActiveLayers.count >= maxSimultaneousLayers {
             let oldest = allActiveLayers.removeFirst()
+            oldest.removeAllAnimations()
             oldest.removeFromSuperlayer()
+            for index in activeStepLayers.keys {
+                activeStepLayers[index]?.removeAll { $0 === oldest }
+            }
+            for index in activeStepSpotlights.keys {
+                activeStepSpotlights[index]?.removeAll { $0 === oldest }
+            }
         }
     }
 
@@ -538,12 +333,14 @@ final class Overlay {
     // -------------------------------------------------------------------------
 
     func point(_ pts: [Point], done: @escaping () -> Void) {
-        let plan = Plan(say: "", points: pts)
+        let plan = Plan(steps: nil, actions: nil, say: "", points: pts)
         let steps = plan.normalizedSteps()
+        let generation = presentationGeneration
         startStep(steps[0], stepIndex: 0)
         showAnnotations(for: steps[0], stepIndex: 0)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            self?.finishPresentation(done: done)
+            guard let self, self.presentationGeneration == generation else { return }
+            self.finishPresentation(done: done)
         }
     }
 }
