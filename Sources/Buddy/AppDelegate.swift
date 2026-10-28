@@ -55,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let voice   = AVSpeechSynthesizer()
     lazy var player = PresentationPlayer(overlay: overlay)
     private var drawingDemo: DrawingDemoController?
+    private var notch: NotchController?
+    private var lastSpokenResponse: String?
+    private var notchError: String?
 
     // MARK: UI
     var statusItem: NSStatusItem!
@@ -64,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         didSet {
             guard oldValue != state else { return }
             blogInfo("[STATE] \(oldValue) → \(state)")
+            notch?.update(state)
         }
     }
 
@@ -91,6 +95,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
+        let notch = NotchController()
+        notch.onStop = { [weak self] in self?.stopFromNotch() }
+        notch.onReplay = { [weak self] in self?.replayFromNotch() }
+        notch.onSettings = { [weak self] in self?.openSettings() }
+        notch.history = { [weak self] in self?.recentResponses() ?? [] }
+        self.notch = notch
 
         // Stage 2: Initialize settings from memory/UserDefaults (silently migrate Keychain without prompting).
         Settings.initialize()
@@ -121,6 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        notch?.shutdown()
+        drawingDemo?.stop()
         // Stage 3: always remove monitors to prevent stale callbacks after relaunch.
         if let m = globalMonitor { NSEvent.removeMonitor(m) }
         if let m = localMonitor  { NSEvent.removeMonitor(m) }
@@ -143,6 +155,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let d = menu.addItem(withTitle: "Drawing Demo…", action: #selector(demoAnnotations), keyEquivalent: "d")
         d.target = self
+
+        let n = menu.addItem(withTitle: "Notch Preview…", action: #selector(previewNotch), keyEquivalent: "")
+        n.target = self
 
         let p = menu.addItem(withTitle: "Fix Permissions…", action: #selector(fixPermissions), keyEquivalent: "")
         p.target = self
@@ -204,6 +219,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let demo = DrawingDemoController()
         drawingDemo = demo
         demo.show()
+    }
+
+    @objc private func previewNotch() {
+        guard state == .idle else { return }
+        notch?.preview()
     }
 
     // -------------------------------------------------------------------------
@@ -336,7 +356,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             failWith(error.localizedDescription)
             return
         }
-
         // Stage 5: start screenshot in parallel with speech, RIGHT NOW at key press.
         screenshotTask = Task.detached(priority: .userInitiated) {
             blogInfo("[SCREEN] \(RequestClock.shared.elapsed) capture started at key-press")
@@ -353,6 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RunLoop.main.add(t, forMode: .common)
 
         transition(to: .listening)
+        notch?.activate()
     }
 
     private func stopListening() {
@@ -416,6 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self, generation == self.interactionGeneration else { return }
                 self.say("I didn't catch that. Hold Control and Option, then speak.")
                 self.overlay.setLabel("didn't catch that")
+                self.notchError = "No speech detected"
                 self.finish()
             }
             return
@@ -446,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard generation == self.interactionGeneration, !Task.isCancelled else { return }
                 self.say("I can't see the screen. Check Screen Recording permission and try again.")
                 self.overlay.setLabel("screen capture failed")
+                self.notchError = "Screen capture failed"
                 self.finish()
             }
             return
@@ -467,6 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self, generation == self.interactionGeneration, !Task.isCancelled else { return }
                 self.say(error.localizedDescription)
                 self.overlay.setLabel("error")
+                self.notchError = "Request failed. Try again."
                 self.finish()
             }
             return
@@ -489,6 +512,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         transition(to: .presenting)
 
         let steps = plan.normalizedSteps()
+        let spoken = steps.map(\.say).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !spoken.isEmpty { lastSpokenResponse = spoken }
         player.play(steps: steps) { [weak self] in
             guard let self else { return }
             if let acts = plan.actions, !acts.isEmpty {
@@ -504,6 +529,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // -------------------------------------------------------------------------
 
     private func finish() {
+        notch?.complete(error: notchError)
+        notchError = nil
         interactionGeneration += 1
         disarmWatchdog()
         requestTask = nil
@@ -518,6 +545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Convenience: speak an error and go idle immediately.
     private func failWith(_ message: String) {
         blogError("[FAIL] \(message)")
+        notchError = message
         say(message)
         overlay.setLabel("error")
         finish()
@@ -546,6 +574,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func disarmWatchdog() {
         watchdog?.cancel()
         watchdog = nil
+    }
+
+    private func stopFromNotch() {
+        if state == .idle {
+            notch?.complete(status: "Stopped")
+            return
+        }
+        guard state != .confirming else { return }
+        interactionGeneration += 1
+        requestTask?.cancel()
+        screenshotTask?.cancel()
+        pathTimer?.invalidate()
+        pathTimer = nil
+        if state == .listening { Task { _ = await ears.stop() } }
+        voice.stopSpeaking(at: .immediate)
+        notch?.complete(status: "Stopped")
+        finish()
+    }
+
+    private func replayFromNotch() {
+        guard state == .idle, let text = lastSpokenResponse, !text.isEmpty else { return }
+        voice.stopSpeaking(at: .immediate)
+        notch?.extendGrace(by: max(2.5, Double(text.split(separator: " ").count) * 0.45 + 2.5))
+        say(text)
+    }
+
+    private func recentResponses() -> [String] {
+        brain.history.compactMap { turn in
+            guard turn["role"] as? String == "model",
+                  let parts = turn["parts"] as? [[String: Any]],
+                  let text = parts.first?["text"] as? String else { return nil }
+            return String(text.prefix(180))
+        }.suffix(4).reversed().map { $0 }
     }
 
     // -------------------------------------------------------------------------
