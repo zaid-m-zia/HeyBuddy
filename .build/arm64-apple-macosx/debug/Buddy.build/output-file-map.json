@@ -1,0 +1,47 @@
+{
+  "": {
+    "swift-dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/primary.swiftdeps"
+  },
+  "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/AppDelegate.swift": {
+    "dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.d",
+    "object": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swift.o",
+    "swiftmodule": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate~partial.swiftmodule",
+    "swift-dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swiftdeps",
+    "diagnostics": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.dia"
+  },
+  "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Brain.swift": {
+    "dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.d",
+    "object": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swift.o",
+    "swiftmodule": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain~partial.swiftmodule",
+    "swift-dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swiftdeps",
+    "diagnostics": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.dia"
+  },
+  "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Ears.swift": {
+    "dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.d",
+    "object": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swift.o",
+    "swiftmodule": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears~partial.swiftmodule",
+    "swift-dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swiftdeps",
+    "diagnostics": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.dia"
+  },
+  "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Overlay.swift": {
+    "dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.d",
+    "object": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swift.o",
+    "swiftmodule": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay~partial.swiftmodule",
+    "swift-dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swiftdeps",
+    "diagnostics": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.dia"
+  },
+  "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Screen.swift": {
+    "dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.d",
+    "object": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swift.o",
+    "swiftmodule": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen~partial.swiftmodule",
+    "swift-dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swiftdeps",
+    "diagnostics": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.dia"
+  },
+  "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/main.swift": {
+    "dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.d",
+    "object": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swift.o",
+    "swiftmodule": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swiftdeps",
+    "diagnostics": "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.dia"
+  }
+}

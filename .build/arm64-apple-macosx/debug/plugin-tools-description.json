@@ -1,0 +1,334 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.Buddy-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "fileList" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources",
+      "importPath" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/AppDelegate.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Brain.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Ears.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Overlay.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Screen.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/main.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "Buddy",
+      "moduleOutputPath" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules/Buddy.swiftmodule",
+      "objects" : [
+        "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swift.o",
+        "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swift.o",
+        "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swift.o",
+        "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swift.o",
+        "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swift.o",
+        "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "Buddy_main",
+        "-swift-version",
+        "5",
+        "-I",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-L",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-plugin-path",
+        "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "buddy"
+      ],
+      "outputFileMapPath" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules/Buddy.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/AppDelegate.swift",
+        "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Brain.swift",
+        "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Ears.swift",
+        "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Overlay.swift",
+        "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Screen.swift",
+        "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/main.swift"
+      ],
+      "tempsPath" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "Buddy" : [
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "-module-name",
+      "Buddy",
+      "-package-name",
+      "buddy",
+      "-c",
+      "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/AppDelegate.swift",
+      "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Brain.swift",
+      "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Ears.swift",
+      "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Overlay.swift",
+      "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Screen.swift",
+      "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/main.swift",
+      "-I",
+      "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "Buddy_main",
+      "-swift-version",
+      "5",
+      "-I",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-L",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-plugin-path",
+      "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "buddy",
+      "-driver-use-frontend-path",
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "Buddy" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy-entitlement.plist"
+    },
+    "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/AppDelegate.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Brain.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Ears.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Overlay.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Screen.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/main.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources"
+    },
+    "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.product/Objects.LinkFileList"
+    },
+    "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+    }
+  }
+}

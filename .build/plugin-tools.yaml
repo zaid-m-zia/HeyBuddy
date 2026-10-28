@@ -1,0 +1,81 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "Buddy-arm64-apple-macosx-debug.exe": ["<Buddy-arm64-apple-macosx-debug.exe>"]
+  "Buddy-arm64-apple-macosx-debug.module": ["<Buddy-arm64-apple-macosx-debug.module>"]
+  "PackageStructure": ["<PackageStructure>"]
+  "main": ["<Buddy-arm64-apple-macosx-debug.exe>","<Buddy-arm64-apple-macosx-debug.module>"]
+  "test": ["<Buddy-arm64-apple-macosx-debug.exe>","<Buddy-arm64-apple-macosx-debug.module>"]
+default: "main"
+nodes:
+  "/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+  "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy":
+    is-mutated: true
+commands:
+  "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy-entitlement.plist":
+    tool: write-auxiliary-file
+    inputs: ["<entitlement-plist>","<com.apple.security.get-task-allow>"]
+    outputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy-entitlement.plist"]
+    description: "Write auxiliary file /Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy-entitlement.plist"
+
+  "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/AppDelegate.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Brain.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Ears.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Overlay.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Screen.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/main.swift"]
+    outputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources"]
+    description: "Write auxiliary file /Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources"
+
+  "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swift.o"]
+    outputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.product/Objects.LinkFileList"
+
+  "/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Library/Developer/CommandLineTools/usr/bin/swiftc"]
+    outputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+
+  "<Buddy-arm64-apple-macosx-debug.exe>":
+    tool: phony
+    inputs: ["<Buddy-arm64-apple-macosx-debug.exe-CodeSigning>"]
+    outputs: ["<Buddy-arm64-apple-macosx-debug.exe>"]
+
+  "<Buddy-arm64-apple-macosx-debug.module>":
+    tool: phony
+    inputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules/Buddy.swiftmodule"]
+    outputs: ["<Buddy-arm64-apple-macosx-debug.module>"]
+
+  "C.Buddy-arm64-apple-macosx-debug.exe":
+    tool: shell
+    inputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.product/Objects.LinkFileList"]
+    outputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy"]
+    description: "Linking ./.build/arm64-apple-macosx/debug/Buddy"
+    args: ["/Library/Developer/CommandLineTools/usr/bin/swiftc","-L","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug","-o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy","-module-name","Buddy","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-alias","-Xlinker","_Buddy_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Library/Developer/CommandLineTools/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-Xlinker","-add_ast_path","-Xlinker","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules/Buddy.swiftmodule","-I","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-L","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-plugin-path","/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-g"]
+
+  "C.Buddy-arm64-apple-macosx-debug.exe-entitlements":
+    tool: shell
+    inputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy-entitlement.plist"]
+    outputs: ["<Buddy-arm64-apple-macosx-debug.exe-CodeSigning>"]
+    description: "Applying debug entitlements to ./.build/arm64-apple-macosx/debug/Buddy"
+    args: ["codesign","--force","--sign","-","--entitlements","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy-entitlement.plist","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy"]
+
+  "C.Buddy-arm64-apple-macosx-debug.module":
+    tool: shell
+    inputs: ["/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/AppDelegate.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Brain.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Ears.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Overlay.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/Screen.swift","/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/main.swift","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources"]
+    outputs: ["/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/AppDelegate.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Brain.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Ears.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Overlay.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/Screen.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/main.swift.o","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules/Buddy.swiftmodule"]
+    description: "Compiling Swift Module 'Buddy' (6 sources)"
+    args: ["/Library/Developer/CommandLineTools/usr/bin/swiftc","-module-name","Buddy","-emit-dependencies","-emit-module","-emit-module-path","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules/Buddy.swiftmodule","-output-file-map","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/output-file-map.json","-incremental","-c","@/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Buddy.build/sources","-I","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/Modules","-target","arm64-apple-macosx13.0","-incremental","-enable-batch-mode","-serialize-diagnostics","-index-store-path","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/index/store","-Onone","-enable-testing","-j10","-DSWIFT_PACKAGE","-DDEBUG","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/zaidzia/Desktop/developer/Buddy/.build/arm64-apple-macosx/debug/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","Buddy_main","-swift-version","5","-I","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-L","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-plugin-path","/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-g","-Xcc","-isysroot","-Xcc","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-Xcc","-fPIC","-Xcc","-g","-package-name","buddy"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/zaidzia/Desktop/developer/Buddy/Sources/Buddy/","/Users/zaidzia/Desktop/developer/Buddy/Package.swift","/Users/zaidzia/Desktop/developer/Buddy/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+

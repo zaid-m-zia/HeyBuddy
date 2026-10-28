@@ -49,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Settings.name = n.stringValue.trimmingCharacters(in: .whitespaces)
             Settings.apiKey = k.stringValue.trimmingCharacters(in: .whitespaces)
         }
-    }
+        
 
     func requestPermissions() {
         SFSpeechRecognizer.requestAuthorization { _ in }
