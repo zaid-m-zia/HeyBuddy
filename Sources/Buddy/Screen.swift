@@ -2,7 +2,7 @@
 // Stage 5 – Screenshot capture and Accessibility element lookup.
 //
 // Changes from original:
-//   - capture() now runs screencapture + sips on a background DispatchQueue
+//   - capture() now runs exact-display Core Graphics capture + sips on a background DispatchQueue
 //     inside a CheckedContinuation, so it NEVER blocks the main thread or a
 //     Swift Concurrency cooperative thread (which is forbidden by the runtime).
 //   - A 5 s per-step timeout wraps each process; the overall call also has a
@@ -70,26 +70,25 @@ enum Screen {
             throw screenError("I can't see the screen. Please enable Screen Recording for Buddy in System Settings → Privacy & Security.")
         }
 
-        // Find which display the cursor is on.
-        let cursorPos = NSEvent.mouseLocation
-        let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(cursorPos) })
-            ?? NSScreen.screens.first
-        guard let screen = targetScreen else {
+        // Select on the main actor: NSScreen and NSEvent belong to AppKit.
+        let selected = await MainActor.run { () -> (CGRect, CGDirectDisplayID)? in
+            let cursorPos = NSEvent.mouseLocation
+            guard let screen = NSScreen.screens.first(where: { $0.frame.contains(cursorPos) })
+                ?? NSScreen.screens.first,
+                  let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                return nil
+            }
+            return (screen.frame, CGDirectDisplayID(number.uint32Value))
+        }
+        guard let (screenFrame, displayID) = selected else {
             throw screenError("No display found.")
         }
-
-        // Extract value-type properties from NSScreen before crossing into the background queue,
-        // since NSScreen itself is not Sendable.
-        let screenFrame = screen.frame
-        // screencapture -D uses a 1-based screen number, not NSScreenNumber's
-        // Core Graphics display ID. NSScreen.screens lists the main display first.
-        let displayNumber = (NSScreen.screens.firstIndex(of: screen) ?? 0) + 1
 
         // Run the blocking subprocess work on a background serial queue.
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    let result = try runCapture(displayNumber: displayNumber, displayFrame: screenFrame)
+                    let result = try runCapture(displayID: displayID, displayFrame: screenFrame)
                     continuation.resume(returning: result)
                 } catch {
                     continuation.resume(throwing: error)
@@ -102,15 +101,23 @@ enum Screen {
     // MARK: Internal blocking capture (runs on background queue only)
     // -------------------------------------------------------------------------
 
-    private static func runCapture(displayNumber: Int, displayFrame: CGRect) throws -> CaptureResult {
+    private static func runCapture(displayID: CGDirectDisplayID, displayFrame: CGRect) throws -> CaptureResult {
         let filePath = NSTemporaryDirectory() + "buddy_capture_\(UUID().uuidString).jpg"
         defer { try? FileManager.default.removeItem(atPath: filePath) }
 
-        // -D 1 is main; -D 2 is the first secondary display.
-        var scArgs = ["-x", "-t", "jpg", "-D", "\(displayNumber)"]
-        scArgs.append(filePath)
-
-        try runProcess("/usr/sbin/screencapture", args: scArgs, timeout: 5)
+        // Capture the exact CG display represented by the chosen NSScreen.
+        // A screencapture -D index is a different identifier and may select
+        // another monitor even when its aspect ratio happens to match.
+        guard let image = CGDisplayCreateImage(displayID),
+              let destination = CGImageDestinationCreateWithURL(URL(fileURLWithPath: filePath) as CFURL,
+                                                                 "public.jpeg" as CFString, 1, nil) else {
+            throw screenError("Screenshot failed. Check Screen Recording permission in System Settings → Privacy & Security.")
+        }
+        CGImageDestinationAddImage(destination, image,
+                                   [kCGImageDestinationLossyCompressionQuality: 0.6] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw screenError("Screenshot could not be saved.")
+        }
 
         // sips: resize to max 1280 px long edge, JPEG quality 60%.
         // Smaller image → faster base64 encode, upload, and model processing.
@@ -130,7 +137,7 @@ enum Screen {
             throw screenError("The captured image does not match the selected display. Try again after checking display settings.")
         }
 
-        blogInfo("[SCREEN] \(RequestClock.shared.elapsed) display=\(displayNumber) image=\(width)x\(height) frame=\(Int(displayFrame.width))x\(Int(displayFrame.height)) points, \(data.count / 1024) KB")
+        blogInfo("[SCREEN] \(RequestClock.shared.elapsed) displayID=\(displayID) image=\(width)x\(height) frame=\(Int(displayFrame.width))x\(Int(displayFrame.height)) points, \(data.count / 1024) KB")
         let ocr = OCRSnapshot()
         DispatchQueue.global(qos: .utility).async {
             ocr.set(recognizedText(in: data))

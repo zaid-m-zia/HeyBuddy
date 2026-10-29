@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var drawingDemo: DrawingDemoController?
     private var notch: NotchController?
     private var lastSpokenResponse: String?
+    private var lastPresentationSteps: [Step]?
     private var notchError: String?
 
     // MARK: UI
@@ -349,6 +350,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         voice.stopSpeaking(at: .immediate)
         path = []
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) {
+            overlay.setDisplayFrame(screen.frame)
+        }
         overlay.show("listening…")
 
         // Stage 4: start ears; handle engine failures gracefully.
@@ -356,12 +360,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             failWith(error.localizedDescription)
             return
         }
-        // Stage 5: start screenshot in parallel with speech, RIGHT NOW at key press.
-        screenshotTask = Task.detached(priority: .userInitiated) {
-            blogInfo("[SCREEN] \(RequestClock.shared.elapsed) capture started at key-press")
-            return try await Screen.capture()
-        }
-
         // Stage 3: path timer in .common run-loop mode so it fires during menus/tracking.
         // The closure captures self weakly and hops to MainActor to mutate path.
         let t = Timer(timeInterval: 0.03, repeats: true) { [weak self] _ in
@@ -384,8 +382,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         pathTimer?.invalidate()
         pathTimer = nil
-        overlay.setLabel("thinking…")
+        // The image must reflect the screen at release, after the user has
+        // finished pointing or opening a menu. Keep our overlay out of it.
+        overlay.hide()
         transition(to: .processing)
+
+        screenshotTask = Task.detached(priority: .userInitiated) {
+            blogInfo("[SCREEN] \(RequestClock.shared.elapsed) capture started at key-release")
+            return try await Screen.capture()
+        }
 
         let generation = interactionGeneration
         let captureTask = screenshotTask
@@ -441,7 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Stage 5: await the screenshot task that started at key press.
+        // Await the screenshot started at key release, in parallel with Ears.stop().
         var capture: CaptureResult
         do {
             if let st = captureTask {
@@ -510,7 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // finish() will be called when presentation finishes (speech + animations).
         await MainActor.run { [weak self] in
             guard let self, generation == self.interactionGeneration, !Task.isCancelled else { return }
-            self.present(plan)
+            self.present(plan, visualRequested: VisualRequest.requiresGuidance(text) || plan.visual == true)
         }
     }
 
@@ -518,15 +523,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Presentation (Stage 2, 4, 5)
     // -------------------------------------------------------------------------
 
-    private func present(_ plan: Plan) {
+    private func present(_ plan: Plan, visualRequested: Bool) {
         disarmWatchdog()  // Watchdog suspended while presenting
         transition(to: .presenting)
 
-        let steps = plan.normalizedSteps()
+        var steps = plan.normalizedSteps()
+        let preparedCount = steps.reduce(0) { $0 + $1.effectiveDrawings.filter(\.isValid).count }
+        if visualRequested && preparedCount == 0 {
+            blogWarn("[DRAWING] Explicit visual request has no valid target or drawing")
+            if let last = steps.indices.last {
+                steps[last].say += " I couldn't place a reliable marker on this screen."
+            }
+            notchError = "Visual target unavailable"
+        }
         let spoken = steps.map(\.say).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !spoken.isEmpty { lastSpokenResponse = spoken }
+        if !spoken.isEmpty {
+            lastSpokenResponse = spoken
+            lastPresentationSteps = steps
+        }
         player.play(steps: steps) { [weak self] in
             guard let self else { return }
+            if visualRequested && preparedCount > 0 && self.overlay.presentedDrawingCount == 0 {
+                blogError("[DRAWING] Visual request completed without displaying a drawing")
+                self.notchError = "Drawing could not be displayed"
+                self.say("I couldn't display the marker. Please try again.")
+            }
             if let acts = plan.actions, !acts.isEmpty {
                 self.showConfirmation(acts)
             } else {
@@ -605,10 +626,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func replayFromNotch() {
-        guard state == .idle, let text = lastSpokenResponse, !text.isEmpty else { return }
+        guard state == .idle, let text = lastSpokenResponse, !text.isEmpty,
+              let steps = lastPresentationSteps, !steps.isEmpty else { return }
         voice.stopSpeaking(at: .immediate)
         notch?.extendGrace(by: max(2.5, Double(text.split(separator: " ").count) * 0.45 + 2.5))
-        say(text)
+        transition(to: .presenting)
+        player.play(steps: steps) { [weak self] in self?.finish() }
     }
 
     private func recentResponses() -> [String] {
@@ -629,6 +652,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let valid: Bool
         switch (state, new) {
         case (.idle,       .listening):   valid = true
+        case (.idle,       .presenting):  valid = true // Replay saved presentation.
         case (.listening,  .processing):  valid = true
         case (.processing, .presenting):  valid = true
         case (.processing, .idle):        valid = true

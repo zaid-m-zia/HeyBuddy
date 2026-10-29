@@ -177,8 +177,17 @@ struct Step: Codable {
         keep = try? c.decode(Bool.self, forKey: .keep)
         let drawingList = try? c.decode(LossyDrawingList.self, forKey: .drawings)
         drawings = drawingList?.elements
+        if c.contains(.drawings) && drawingList == nil {
+            blogWarn("[DRAWING] Malformed drawings collection; preserving spoken step")
+        }
+        if c.contains(.annotations) && annotations == nil {
+            blogWarn("[DRAWING] Malformed legacy annotations collection; preserving spoken step")
+        }
         if let discarded = drawingList?.discardedCount, discarded > 0 {
             blogWarn("[DRAWING] Discarded \(discarded) malformed drawing value(s)")
+        }
+        if let invalid = drawingList?.elements.filter({ !$0.isValid }), !invalid.isEmpty {
+            blogWarn("[DRAWING] Decoded \(invalid.count) invalid element(s): \(invalid.map { String($0.type.prefix(24)) }.joined(separator: ","))")
         }
     }
 
@@ -197,10 +206,28 @@ struct Plan: Codable {
     // New format (Stage 3):
     var steps: [Step]?
     var actions: [Action]?
+    var visual: Bool?                 // Whether the answer calls for screen guidance.
 
     // Backwards-compatible legacy format:
     var say: String?
     var points: [Point]?
+
+    init(steps: [Step]?, actions: [Action]?, say: String?, points: [Point]?, visual: Bool? = nil) {
+        self.steps = steps; self.actions = actions; self.say = say; self.points = points; self.visual = visual
+    }
+
+    private enum CodingKeys: String, CodingKey { case steps, actions, visual, say, points }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        steps = try? c.decode([Step].self, forKey: .steps)
+        actions = try? c.decode([Action].self, forKey: .actions)
+        visual = try? c.decode(Bool.self, forKey: .visual)
+        say = try? c.decode(String.self, forKey: .say)
+        points = try? c.decode([Point].self, forKey: .points)
+        if c.contains(.steps) && steps == nil { blogWarn("[DRAWING] Malformed steps collection") }
+        if c.contains(.visual) && visual == nil { blogWarn("[DRAWING] Malformed visual flag") }
+    }
 
     /// Normalizes the plan into an ordered sequence of Steps.
     func normalizedSteps() -> [Step] {
@@ -252,6 +279,7 @@ final class Brain {
 
         Reply with ONLY valid JSON in this shape (choose real values, and use empty arrays when no drawing or action helps):
         {
+          "visual": true,
           "steps": [
             {
               "say": "Look at this heading.",
@@ -268,12 +296,13 @@ final class Brain {
 
         Rules:
         - At most 6 steps. "say" is spoken aloud: concise, warm, natural, zero markdown.
+        - Set "visual" true when the user asks you to point, mark, locate, compare visible content, or explain this screen. Set it false for a general question that needs no screen drawing. If true, provide grounded drawings in the relevant steps, or say clearly why no visible target can be identified.
         - Prefer "drawings" for new visuals; do not send both "drawings" and legacy "annotations" in one step.
         - Drawing coordinates are top-left normalized 0-1000. Points use {"x": number, "y": number}; rects use {"x": number, "y": number, "width": number, "height": number}. Keep every shape inside the grid.
         - Choose each drawing from the user's question, the visible target, and what that spoken step explains. Return multiple coordinated drawings when useful; never add shapes just for variety.
         - For a click target or bounded UI region use a tight red/coral outline rect, optionally with an arrow whose "to" point touches that target. For a small icon use a circle or ellipse. For text/value emphasis use a narrow translucent yellow/amber highlight or underline. Use a spotlight briefly for one target in a crowded interface. Use lines/arrows for relationships; badges for real sequences; brackets/braces for groups.
         - A UI target is usually better served by an outline than a broad yellow highlight. Do not highlight entire windows or unrelated content.
-        - Give every drawing a short "purpose" and, when useful, a short "targetID" linking a label to a drawn target. Set "cue" to the exact phrase in "say" that introduces the drawing.
+        - Give every drawing a short "purpose" and, when useful, a short "targetID" linking a label to a drawn target. Set "cue" to the exact phrase in "say" that introduces the drawing. For an intentional companion pointer move, include a valid pointer drawing or an arrow ending on the target; "focus" alone never moves it.
         - If the target itself has clearly legible text, add "targetText" with the exact visible text. Local OCR may align a highlight, underline, pointer, or arrow to one unique exact match. Omit targetText for icons, ambiguous text, or guessed words.
         - Include a center "point" for pointers, labels and badges; a tight "rect" for full visible targets; endpoints for arrows/lines. Use the supplied screenshot itself to place them. If the target is not visible or cannot be localized confidently, explain that and return no drawing.
         - Valid style colors are primary, red, coral, blue, cyan, yellow, amber, white. Outlines have no opaque fill; highlights remain translucent. Prefer red/coral for UI outlines, blue/cyan for direction, yellow/amber for text emphasis.

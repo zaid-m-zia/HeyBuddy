@@ -25,6 +25,32 @@ enum DrawingKind: String, Codable {
     case pointer, line, polyline, arrow, curvedArrow, curve, circle, ellipse
     case rect, roundedRect, polygon, regularPolygon, underline, highlight
     case spotlight, brace, bracket, freehand, label, explanatoryLabel, badge
+
+    /// Gemini sometimes changes capitalization or uses a familiar shape synonym.
+    /// Keep the response schema canonical while repairing only unambiguous names.
+    static func fromResponse(_ value: String) -> DrawingKind? {
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+        if let kind = allCasesByName[key] { return kind }
+        switch key {
+        case "rectangle", "box", "boundingbox", "outline", "outlinedrectangle": return .rect
+        case "roundedrectangle": return .roundedRect
+        case "curvedarrow": return .curvedArrow
+        case "regularpolygon": return .regularPolygon
+        case "explanatorylabel": return .explanatoryLabel
+        default: return nil
+        }
+    }
+
+    private static let allCasesByName: [String: DrawingKind] = {
+        let kinds: [DrawingKind] = [.pointer, .line, .polyline, .arrow, .curvedArrow,
+            .curve, .circle, .ellipse, .rect, .roundedRect, .polygon, .regularPolygon,
+            .underline, .highlight, .spotlight, .brace, .bracket, .freehand,
+            .label, .explanatoryLabel, .badge]
+        return Dictionary(uniqueKeysWithValues: kinds.map { ($0.rawValue.lowercased(), $0) })
+    }()
 }
 
 enum DrawingGeometry: Equatable {
@@ -56,7 +82,7 @@ struct DrawingStyle: Codable, Equatable {
     var fillOpacity: Double? = nil
 
     var isValid: Bool {
-        (color.map { ["primary", "red", "coral", "blue", "cyan", "yellow", "amber", "white"].contains($0) } ?? true) &&
+        (color.map { ["primary", "red", "coral", "blue", "cyan", "yellow", "amber", "white"].contains($0.lowercased()) } ?? true) &&
         (strokeWidth.map { $0.isFinite && (1...8).contains($0) } ?? true) &&
         (opacity.map { $0.isFinite && (0...1).contains($0) } ?? true) &&
         (fillOpacity.map { $0.isFinite && (0...0.30).contains($0) } ?? true)
@@ -77,7 +103,7 @@ struct DrawingElement: Codable {
     var targetText: String? // Exact visible text, for conservative local OCR alignment.
     var purpose: String?
 
-    var kind: DrawingKind? { DrawingKind(rawValue: type) }
+    var kind: DrawingKind? { DrawingKind.fromResponse(type) }
 
     var anchor: DrawingPoint? {
         switch geometry {
@@ -122,7 +148,7 @@ struct DrawingElement: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, type, point, rect, from, to, control1, control2, points, sides
+        case id, type, point, rect, box_2d, from, to, control1, control2, points, sides
         case text, label, style, duration, order, targetID, targetText, purpose
     }
 
@@ -143,28 +169,45 @@ struct DrawingElement: Codable {
             geometry = .invalid
             return
         }
-        guard let decodedKind = DrawingKind(rawValue: type) else { geometry = .invalid; return }
+        guard let decodedKind = DrawingKind.fromResponse(type) else { geometry = .invalid; return }
+        func point(_ key: CodingKeys) -> DrawingPoint? {
+            if let value = try? c.decode(DrawingPoint.self, forKey: key) { return value }
+            if let values = try? c.decode([Double].self, forKey: key), values.count == 2 {
+                return DrawingPoint(x: values[1], y: values[0])
+            }
+            return nil
+        }
+        func rect() -> DrawingRect? {
+            if let value = try? c.decode(DrawingRect.self, forKey: .rect) { return value }
+            if let values = try? c.decode([Double].self, forKey: .box_2d), values.count == 4 {
+                return DrawingRect(x: values[1], y: values[0],
+                                   width: values[3] - values[1], height: values[2] - values[0])
+            }
+            return nil
+        }
         switch decodedKind {
         case .pointer, .badge, .label, .explanatoryLabel:
-            geometry = (try? c.decode(DrawingPoint.self, forKey: .point)).map(DrawingGeometry.point) ?? .invalid
+            geometry = point(.point).map(DrawingGeometry.point) ?? .invalid
         case .circle, .ellipse, .rect, .roundedRect, .underline, .highlight, .spotlight, .brace, .bracket:
-            geometry = (try? c.decode(DrawingRect.self, forKey: .rect)).map(DrawingGeometry.rect) ?? .invalid
+            geometry = rect().map(DrawingGeometry.rect) ?? .invalid
         case .line, .arrow:
-            if let a = try? c.decode(DrawingPoint.self, forKey: .from),
-               let b = try? c.decode(DrawingPoint.self, forKey: .to) { geometry = .segment(a, b) }
+            if let a = point(.from), let b = point(.to) { geometry = .segment(a, b) }
             else { geometry = .invalid }
         case .curvedArrow, .curve:
-            if let a = try? c.decode(DrawingPoint.self, forKey: .from),
-               let b = try? c.decode(DrawingPoint.self, forKey: .control1),
-               let d = try? c.decode(DrawingPoint.self, forKey: .to) {
-                let c2 = (try? c.decode(DrawingPoint.self, forKey: .control2)) ?? b
+            if let a = point(.from), let b = point(.control1), let d = point(.to) {
+                let c2 = point(.control2) ?? b
                 geometry = .cubic(a, b, c2, d)
             } else { geometry = .invalid }
         case .polyline, .polygon, .freehand:
-            geometry = (try? c.decode([DrawingPoint].self, forKey: .points)).map(DrawingGeometry.path) ?? .invalid
+            if let values = try? c.decode([DrawingPoint].self, forKey: .points) {
+                geometry = .path(values)
+            } else if let values = try? c.decode([[Double]].self, forKey: .points),
+                      values.allSatisfy({ $0.count == 2 }) {
+                geometry = .path(values.map { DrawingPoint(x: $0[1], y: $0[0]) })
+            } else { geometry = .invalid }
         case .regularPolygon:
-            if let rect = try? c.decode(DrawingRect.self, forKey: .rect), let sides = try? c.decode(Int.self, forKey: .sides) {
-                geometry = .regularPolygon(rect, sides)
+            if let value = rect(), let sides = try? c.decode(Int.self, forKey: .sides) {
+                geometry = .regularPolygon(value, sides)
             } else { geometry = .invalid }
         }
     }
@@ -191,7 +234,7 @@ struct DrawingElement: Codable {
     }
 
     static func legacy(_ a: Annotation) -> DrawingElement? {
-        guard let kind = DrawingKind(rawValue: a.type) else { return nil }
+        guard let kind = DrawingKind.fromResponse(a.type) else { return nil }
         func point(_ values: [Double]?) -> DrawingPoint? {
             guard let values, values.count == 2 else { return nil }
             return DrawingPoint(x: values[1], y: values[0])
@@ -242,7 +285,7 @@ struct OCRTarget {
 }
 
 /// Snap only to one exact OCR match. Ambiguous or missing text leaves the model's
-/// coordinates untouched, and UI outlines keep their full model-selected bounds.
+/// coordinates untouched. Compact UI outlines retain their model-selected size.
 enum DrawingTargetResolver {
     static func refine(_ plan: Plan, targets: [OCRTarget]) -> Plan {
         var result = plan
@@ -269,6 +312,15 @@ enum DrawingTargetResolver {
                     snapped.geometry = .cubic(start, c1, c2, center)
                 case (.pointer, .point(_)):
                     snapped.geometry = .point(center)
+                case (.rect, .rect(let outline)), (.roundedRect, .rect(let outline)):
+                    if outline.width <= 200 && outline.height <= 150 &&
+                        abs(outline.x + outline.width / 2 - center.x) <= outline.width &&
+                        abs(outline.y + outline.height / 2 - center.y) <= outline.height {
+                        snapped.geometry = .rect(DrawingRect(
+                            x: min(max(center.x - outline.width / 2, 0), 1000 - outline.width),
+                            y: min(max(center.y - outline.height / 2, 0), 1000 - outline.height),
+                            width: outline.width, height: outline.height))
+                    }
                 default: break
                 }
                 return snapped.isValid ? snapped : element
@@ -326,6 +378,33 @@ struct LossyDrawingList: Decodable {
         }
         elements = valid
         discardedCount = discarded
+    }
+}
+
+extension Step {
+    /// Preserve invalid new elements for renderer diagnostics. Fall back to
+    /// legacy elements only when the new list has no usable drawing.
+    var effectiveDrawings: [DrawingElement] {
+        let planned = drawings ?? []
+        if planned.contains(where: \.isValid) { return planned }
+        return (annotations ?? []).compactMap(DrawingElement.legacy)
+    }
+
+    /// Only a pointer mark or arrow endpoint authorizes companion movement.
+    /// A bare focus or an arbitrary shape center is not a pointing instruction.
+    var pointerTarget: DrawingPoint? {
+        effectiveDrawings.first(where: { $0.isValid && $0.kind == .pointer })?.anchor ??
+        effectiveDrawings.first(where: { $0.isValid && ($0.kind == .arrow || $0.kind == .curvedArrow) })?.anchor
+    }
+}
+
+enum VisualRequest {
+    static func requiresGuidance(_ transcript: String) -> Bool {
+        let text = transcript.lowercased()
+        return ["show me where", "where should i click", "where do i click", "point to",
+                "circle ", "highlight ", "underline ", "mark ", "annotate ",
+                "draw ", "this paragraph", "this interface", "this screen",
+                "these two values", "on my screen"].contains { text.contains($0) }
     }
 }
 

@@ -223,7 +223,7 @@ final class DrawingEngineTests: XCTestCase {
         XCTAssertEqual(second.drawings?.filter(\.isValid).count, 0)
     }
 
-    func testUniqueLocalOCRSnapsTextAndArrowButPreservesUIOutline() throws {
+    func testUniqueLocalOCRSnapsTextArrowAndCompactUIOutline() throws {
         let target = try XCTUnwrap(OCRTarget(text: "Settings", visionBox: CGRect(x: 0.20, y: 0.60, width: 0.10, height: 0.05)))
         XCTAssertEqual(target.rect, r(200, 350, 100, 50))
         let original = [
@@ -238,8 +238,72 @@ final class DrawingEngineTests: XCTestCase {
         let drawings = try XCTUnwrap(refined.steps?.first?.drawings)
         XCTAssertEqual(drawings[0].geometry, .rect(target.rect))
         XCTAssertEqual(drawings[1].geometry, .segment(p(100, 100), p(250, 375)))
-        XCTAssertEqual(drawings[2].geometry, original[2].geometry)
+        XCTAssertEqual(drawings[2].geometry, .rect(r(160, 320, 180, 110)))
         let ambiguous = DrawingTargetResolver.refine(plan, targets: [target, target])
         XCTAssertEqual(ambiguous.steps?.first?.drawings?[0].geometry, original[0].geometry)
+    }
+
+    func testModelAliasesAndLegacyCoordinatesKeepTheirShapes() throws {
+        let json = #"{"visual":true,"steps":[{"say":"Open Settings","drawings":[{"type":"Rectangle","box_2d":[100,200,220,420],"style":{"color":"RED"}},{"type":"ARROW","from":[250,100],"to":[160,310]},{"type":"Highlight","rect":{"x":200,"y":300,"width":100,"height":25}},{"type":"mystery","rect":{"x":1,"y":1,"width":2,"height":2}}]}]}"#
+        let plan = try JSONDecoder().decode(Plan.self, from: Data(json.utf8))
+        XCTAssertEqual(plan.visual, true)
+        let drawings = try XCTUnwrap(plan.steps?.first?.drawings)
+        XCTAssertEqual(drawings[0].kind, .rect)
+        XCTAssertEqual(drawings[0].geometry, .rect(r(200, 100, 220, 120)))
+        XCTAssertEqual(drawings[1].geometry, .segment(p(100, 250), p(310, 160)))
+        XCTAssertEqual(drawings[2].kind, .highlight)
+        XCTAssertFalse(drawings[3].isValid)
+        let layers = DrawingRenderer().render(drawings, mapper: mapper, backingScale: 2)
+        XCTAssertEqual(layers.count, 3)
+        XCTAssertNil((layers[0].layer as? CAShapeLayer)?.fillColor)
+        let malformedFlag = #"{"visual":"true","steps":[{"say":"Still spoken","drawings":[]}]}"#
+        let recovered = try JSONDecoder().decode(Plan.self, from: Data(malformedFlag.utf8))
+        XCTAssertNil(recovered.visual)
+        XCTAssertEqual(recovered.normalizedSteps().first?.say, "Still spoken")
+    }
+
+    func testPointerRequiresIntentionalValidEndpoint() throws {
+        _ = NSApplication.shared
+        let overlay = Overlay(frame: CGRect(x: 50, y: 80, width: 800, height: 600))
+        overlay.beginPresentation()
+        let still = overlay.pointer.position
+        let speech = Step(say: "The answer is forty two", cue: nil, focus: [100, 900],
+                          annotations: nil, keep: false)
+        overlay.startStep(speech, stepIndex: 0)
+        XCTAssertTrue(overlay.pointer.isHidden)
+        XCTAssertEqual(overlay.pointer.position, still)
+        let box = Step(say: "Settings is here", cue: nil, focus: nil, annotations: nil,
+                       keep: false, drawings: [DrawingElement(kind: .rect, geometry: .rect(r(200, 200, 100, 50)))])
+        overlay.startStep(box, stepIndex: 1)
+        XCTAssertTrue(overlay.pointer.isHidden)
+        let arrow = Step(say: "Click here", cue: nil, focus: nil, annotations: nil,
+                         keep: false, drawings: [DrawingElement(kind: .arrow,
+                            geometry: .segment(p(100, 100), p(300, 250)))])
+        XCTAssertEqual(arrow.pointerTarget, p(300, 250))
+        overlay.startStep(arrow, stepIndex: 2)
+        XCTAssertFalse(overlay.pointer.isHidden)
+        XCTAssertEqual(overlay.pointer.position, mapper.point(p(300, 250)))
+        overlay.cancel()
+    }
+
+    func testVisualRequestAndActualLayerCount() {
+        XCTAssertTrue(VisualRequest.requiresGuidance("Show me where to click"))
+        XCTAssertTrue(VisualRequest.requiresGuidance("Explain this paragraph"))
+        XCTAssertFalse(VisualRequest.requiresGuidance("What is photosynthesis?"))
+        _ = NSApplication.shared
+        let overlay = Overlay(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        overlay.beginPresentation()
+        let empty = Step(say: "I cannot see that target", cue: nil, focus: nil,
+                         annotations: nil, keep: false, drawings: [])
+        overlay.showAnnotations(for: empty, stepIndex: 0)
+        XCTAssertEqual(overlay.presentedDrawingCount, 0)
+        let valid = Step(say: "Here it is", cue: nil, focus: nil, annotations: nil,
+                         keep: false, drawings: [DrawingElement(kind: .rect,
+                            geometry: .rect(r(200, 200, 100, 50)))])
+        overlay.showAnnotations(for: valid, stepIndex: 1)
+        XCTAssertEqual(overlay.presentedDrawingCount, 1)
+        overlay.beginPresentation()
+        XCTAssertEqual(overlay.presentedDrawingCount, 0)
+        overlay.cancel()
     }
 }

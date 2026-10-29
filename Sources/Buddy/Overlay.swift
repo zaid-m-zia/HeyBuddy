@@ -24,6 +24,7 @@ final class Overlay {
     private var activeStepSpotlights: [Int: [CALayer]] = [:]
     private var allActiveLayers: [CALayer] = []
     private var shownSteps: Set<Int> = []
+    private(set) var presentedDrawingCount = 0
     private var presentationGeneration = 0
     private let drawingRenderer = DrawingRenderer()
 
@@ -141,6 +142,7 @@ final class Overlay {
 
     func show(_ s: String) {
         follow = true
+        pointer.isHidden = false
         setLabel(s)
         win.orderFrontRegardless()
         followTimer?.invalidate()
@@ -180,10 +182,12 @@ final class Overlay {
     func beginPresentation() {
         presentationGeneration += 1
         removeAllLayers()
+        presentedDrawingCount = 0
         follow = false
         followTimer?.invalidate()
         followTimer = nil
         setLabel("")
+        pointer.isHidden = true
         win.orderFrontRegardless()
         if ProcessInfo.processInfo.environment["BUDDY_DRAW_DEBUG"] == "1" {
             blogDebug("[DRAWING] presentation began; previous layers cleared")
@@ -195,28 +199,39 @@ final class Overlay {
     // -------------------------------------------------------------------------
 
     func startStep(_ step: Step, stepIndex: Int) {
-        // Fly pointer to focus
-        let targetPoint: CGPoint
-        if let f = step.focus, f.count == 2,
-           DrawingPoint(x: f[1], y: f[0]).isValid {
-            targetPoint = mapPoint(yNorm: f[0], xNorm: f[1])
-        } else if let drawing = step.drawings?.first(where: { $0.isValid }), let anchor = drawing.anchor {
-            targetPoint = CanvasMapper(size: displayFrame.size).point(anchor)
-        } else if let firstAnnot = step.annotations?.first {
-            targetPoint = anchorForAnnotation(firstAnnot)
-        } else {
-            targetPoint = pointer.position
+        guard let target = step.pointerTarget, target.isValid else {
+            pointer.isHidden = true
+            setLabel("")
+            return
         }
-
-        flyPointer(to: targetPoint, label: step.annotations?.first?.label)
+        let point = CanvasMapper(size: displayFrame.size).point(target)
+        guard point.x >= 0, point.x <= displayFrame.width,
+              point.y >= 0, point.y <= displayFrame.height else {
+            blogWarn("[DRAWING] Pointer target outside overlay bounds in step \(stepIndex + 1)")
+            return
+        }
+        if pointer.isHidden {
+            let mouse = NSEvent.mouseLocation
+            let start = displayFrame.contains(mouse)
+                ? CGPoint(x: mouse.x - displayFrame.minX, y: mouse.y - displayFrame.minY) : point
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            pointer.position = start
+            CATransaction.commit()
+        }
+        pointer.isHidden = false
+        flyPointer(to: point, label: nil)
     }
 
     func showAnnotations(for step: Step, stepIndex: Int) {
         guard shownSteps.insert(stepIndex).inserted else { return }
-        let planned = step.drawings ?? []
-        let elements = planned.contains(where: \.isValid) ? planned :
-            (step.annotations ?? []).compactMap(DrawingElement.legacy)
-        guard !elements.isEmpty else { return }
+        let elements = step.effectiveDrawings
+        guard !elements.isEmpty else {
+            if step.drawings != nil || step.annotations != nil {
+                blogWarn("[DRAWING] Step \(stepIndex + 1) produced no usable drawing elements")
+            }
+            return
+        }
         var stepLayers: [CALayer] = []
         let rendered = drawingRenderer.render(elements, mapper: CanvasMapper(size: displayFrame.size),
                                               backingScale: win.backingScaleFactor)
@@ -229,6 +244,9 @@ final class Overlay {
                 activeStepSpotlights[stepIndex, default: []].append(item.layer)
             }
         }
+
+        presentedDrawingCount += stepLayers.count
+        if stepLayers.isEmpty { blogWarn("[DRAWING] Step \(stepIndex + 1) rendered zero layers") }
 
         activeStepLayers[stepIndex] = (activeStepLayers[stepIndex] ?? []) + stepLayers
     }
@@ -288,20 +306,6 @@ final class Overlay {
 
         let cleanedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         setLabel(cleanedLabel)
-    }
-
-    private func anchorForAnnotation(_ a: Annotation) -> CGPoint {
-        if let p = a.point, p.count >= 2 {
-            return mapPoint(yNorm: p[0], xNorm: p[1])
-        }
-        if let b = a.box_2d, b.count >= 4 {
-            let r = mapBox(b)
-            return CGPoint(x: r.midX, y: r.midY)
-        }
-        if let pts = a.points, let first = pts.first, first.count >= 2 {
-            return mapPoint(yNorm: first[0], xNorm: first[1])
-        }
-        return pointer.position
     }
 
     // -------------------------------------------------------------------------

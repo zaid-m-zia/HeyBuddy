@@ -157,8 +157,20 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
         overlay?.startStep(step, stepIndex: idx)
 
         // If no cue is set, display annotations right away; otherwise wait for cue
-        if cueOffsetsByStep[idx] == nil {
+        if cueOffsetsByStep[idx] == nil || step.say.split(separator: " ").count <= 4 {
+            triggeredCues.insert(idx)
             overlay?.showAnnotations(for: step, stepIndex: idx)
+        } else {
+            // AVSpeechSynthesizer can omit word-range callbacks. Show the step
+            // during speech rather than for an instant after it has finished.
+            let currentGeneration = generation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+                guard let self, self.generation == currentGeneration,
+                      !self.finishedSteps.contains(idx), !self.triggeredCues.contains(idx) else { return }
+                self.triggeredCues.insert(idx)
+                blogWarn("[PLAYER] cue callback absent; showing step \(idx + 1) during speech")
+                self.overlay?.showAnnotations(for: step, stepIndex: idx)
+            }
         }
         armCompletionWatchdog(gen: generation, stepIndex: idx)
     }

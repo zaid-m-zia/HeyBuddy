@@ -104,7 +104,7 @@ final class DrawingRenderer {
     }
 
     private func color(_ element: DrawingElement) -> NSColor {
-        switch element.style?.color {
+        switch element.style?.color?.lowercased() {
         case "blue": return Palette.blue
         case "cyan": return Palette.cyan
         case "yellow": return NSColor.systemYellow
