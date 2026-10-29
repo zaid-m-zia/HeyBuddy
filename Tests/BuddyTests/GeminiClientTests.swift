@@ -10,6 +10,20 @@ private final class MemoryKeyStore: APIKeyStore {
 
 private final class StubProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    static func bodyData(_ request: URLRequest) -> Data? {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count < 0 { return nil }
+            if count == 0 { return body }
+            body.append(contentsOf: buffer.prefix(count))
+        }
+    }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -107,10 +121,14 @@ final class GeminiClientTests: XCTestCase {
         let (body, width, height) = try brain.buildPayload(prompt: "Hello", image: jpeg, id: "test")
         XCTAssertEqual(width, 2)
         XCTAssertEqual(height, 2)
-        let text = try XCTUnwrap(String(data: body, encoding: .utf8))
-        XCTAssertTrue(text.contains("inline_data"))
-        XCTAssertTrue(text.contains("image/jpeg"))
-        XCTAssertTrue(text.contains("application/json"))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let config = try XCTUnwrap(json["generationConfig"] as? [String: Any])
+        XCTAssertEqual(config["responseMimeType"] as? String, "application/json")
+        let contents = try XCTUnwrap(json["contents"] as? [[String: Any]])
+        let parts = try XCTUnwrap(contents.last?["parts"] as? [[String: Any]])
+        let imagePart = try XCTUnwrap(parts.last?["inline_data"] as? [String: Any])
+        XCTAssertEqual(imagePart["mime_type"] as? String, "image/jpeg")
+        XCTAssertNotNil(imagePart["data"] as? String)
     }
 
     func testBoundedOverloadRetry() async throws {
@@ -152,9 +170,14 @@ final class GeminiClientTests: XCTestCase {
                 throw URLError(.badURL)
             }
             if request.httpMethod == "POST" {
-                let body = try XCTUnwrap(request.httpBody)
-                let text = try XCTUnwrap(String(data: body, encoding: .utf8))
-                sawImage = text.contains("inline_data") && text.contains("image/jpeg") && text.contains("User said: Hello")
+                let body = try XCTUnwrap(StubProtocol.bodyData(request))
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                let contents = try XCTUnwrap(json["contents"] as? [[String: Any]])
+                let parts = try XCTUnwrap(contents.last?["parts"] as? [[String: Any]])
+                let imagePart = parts.last?["inline_data"] as? [String: Any]
+                sawImage = (imagePart?["mime_type"] as? String) == "image/jpeg" &&
+                    (imagePart?["data"] as? String) != nil &&
+                    (parts.first?["text"] as? String)?.contains("User said: Hello") == true
                 return (response, Data(#"{"candidates":[{"content":{"parts":[{"text":"{\"say\":\"Hi\"}"}]}}]}"#.utf8))
             }
             return (response, Data(#"{"models":[{"name":"models/gemini-3.5-flash","supportedGenerationMethods":["generateContent"]}]}"#.utf8))

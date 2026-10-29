@@ -64,7 +64,7 @@ final class DrawingRenderer {
     func render(_ elements: [DrawingElement], mapper: CanvasMapper, backingScale: CGFloat) -> [RenderedDrawing] {
         let rejected = elements.filter { !$0.isValid }
         if !rejected.isEmpty {
-            blogWarn("[DRAWING] Skipped \(rejected.count) invalid element(s): \(rejected.map(\.type).joined(separator: ","))")
+            blogWarn("[DRAWING] Skipped \(rejected.count) invalid element(s): \(rejected.map { String($0.type.prefix(24)) }.joined(separator: ","))")
         }
         if debugDrawings {
             blogDebug("[DRAWING] requested=\(elements.count) types=\(elements.map(\.type).joined(separator: ",")) canvas=\(Int(mapper.size.width))x\(Int(mapper.size.height))")

@@ -667,14 +667,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let under = Screen.elementUnder(last, primaryDisplayTop: NSScreen.screens.first?.frame.maxY ?? s.maxY)
 
         let gesture: String
+        let gestureKind: String
         if max(w, h) > 60 && closed && len > (w + h) * 1.5 {
+            gestureKind = "circle"
             gesture = "user CIRCLED a region (\(box)). \(under)"
         } else if max(w, h) > 60 {
+            gestureKind = "sweep"
             gesture = "user moved cursor over region (\(box)), ending at (\(nx(last.x)), \(ny(last.y))). \(under)"
         } else {
+            gestureKind = "point"
             gesture = "user is POINTING at (\(nx(last.x)), \(ny(last.y))). \(under)"
         }
-        blogDebug("[GESTURE] \(gesture.prefix(120))")
+        blogDebug("[GESTURE] type=\(gestureKind) region=(\(box))")
         return gesture
     }
 
