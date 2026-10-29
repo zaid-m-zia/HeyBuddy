@@ -116,8 +116,18 @@ final class Overlay {
 
     func setDisplayFrame(_ frame: CGRect) {
         displayFrame = frame
+        if ProcessInfo.processInfo.environment["BUDDY_DRAW_DEBUG"] == "1" {
+            blogDebug("[DRAWING] overlayFrame=\(Int(frame.minX)),\(Int(frame.minY)) \(Int(frame.width))x\(Int(frame.height)) points backingScale=\(win.backingScaleFactor)")
+        }
         win.setFrame(frame, display: false)
         root.frame = CGRect(origin: .zero, size: frame.size)
+        let mouse = NSEvent.mouseLocation
+        if frame.contains(mouse) {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            pointer.position = CGPoint(x: mouse.x - frame.minX, y: mouse.y - frame.minY)
+            CATransaction.commit()
+        }
     }
 
     func setLabel(_ s: String) {
@@ -144,7 +154,7 @@ final class Overlay {
                 let localY = m.y - self.displayFrame.minY
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
-                self.pointer.position = CGPoint(x: localX + 16, y: localY - 4)
+                self.pointer.position = CGPoint(x: localX, y: localY)
                 CATransaction.commit()
             }
         }
@@ -175,6 +185,9 @@ final class Overlay {
         followTimer = nil
         setLabel("")
         win.orderFrontRegardless()
+        if ProcessInfo.processInfo.environment["BUDDY_DRAW_DEBUG"] == "1" {
+            blogDebug("[DRAWING] presentation began; previous layers cleared")
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -200,7 +213,9 @@ final class Overlay {
 
     func showAnnotations(for step: Step, stepIndex: Int) {
         guard shownSteps.insert(stepIndex).inserted else { return }
-        let elements = step.drawings ?? (step.annotations ?? []).compactMap(DrawingElement.legacy)
+        let planned = step.drawings ?? []
+        let elements = planned.contains(where: \.isValid) ? planned :
+            (step.annotations ?? []).compactMap(DrawingElement.legacy)
         guard !elements.isEmpty else { return }
         var stepLayers: [CALayer] = []
         let rendered = drawingRenderer.render(elements, mapper: CanvasMapper(size: displayFrame.size),
@@ -245,6 +260,9 @@ final class Overlay {
         allActiveLayers.removeAll()
         activeStepLayers.removeAll()
         activeStepSpotlights.removeAll()
+        if ProcessInfo.processInfo.environment["BUDDY_DRAW_DEBUG"] == "1" {
+            blogDebug("[DRAWING] presentation finishing; layers cleared")
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             guard let self, self.presentationGeneration == generation else { return }

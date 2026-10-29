@@ -139,7 +139,7 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
         fallbackTimer?.cancel()
         guard idx < steps.count else { return }
         let step = steps[idx]
-        blogInfo("[PLAYER] didStart step \(idx + 1)/\(steps.count): '\(step.say.prefix(50))'")
+        blogInfo("[PLAYER] didStart step \(idx + 1)/\(steps.count)")
 
         // Pointer flight starts immediately on step start
         overlay?.startStep(step, stepIndex: idx)

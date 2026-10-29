@@ -50,13 +50,13 @@ enum DrawingGeometry: Equatable {
 }
 
 struct DrawingStyle: Codable, Equatable {
-    var color: String? = nil // "primary" or "blue"; unrecognized colors use primary
+    var color: String? = nil // Named palette color; unknown names invalidate this drawing.
     var strokeWidth: Double? = nil
     var opacity: Double? = nil
     var fillOpacity: Double? = nil
 
     var isValid: Bool {
-        (color.map { ["primary", "blue"].contains($0) } ?? true) &&
+        (color.map { ["primary", "red", "coral", "blue", "cyan", "yellow", "amber", "white"].contains($0) } ?? true) &&
         (strokeWidth.map { $0.isFinite && (1...8).contains($0) } ?? true) &&
         (opacity.map { $0.isFinite && (0...1).contains($0) } ?? true) &&
         (fillOpacity.map { $0.isFinite && (0...0.30).contains($0) } ?? true)
@@ -80,7 +80,9 @@ struct DrawingElement: Codable {
 
     var anchor: DrawingPoint? {
         switch geometry {
-        case .point(let p), .segment(let p, _), .cubic(let p, _, _, _): return p
+        case .point(let p): return p
+        case .segment(let start, let end): return kind == .arrow ? end : start
+        case .cubic(let start, _, _, let end): return kind == .curvedArrow ? end : start
         case .rect(let r), .regularPolygon(let r, _): return DrawingPoint(x: r.x + r.width / 2, y: r.y + r.height / 2)
         case .path(let points): return points.first
         case .invalid: return nil
@@ -223,6 +225,13 @@ struct DrawingElement: Codable {
 struct CanvasMapper {
     let size: CGSize
 
+    /// The model sees a whole-display screenshot. Resizing its pixels without
+    /// cropping leaves normalized positions unchanged; geometry stays in points.
+    func normalized(_ globalPoint: CGPoint, displayFrame: CGRect) -> DrawingPoint {
+        DrawingPoint(x: Double((globalPoint.x - displayFrame.minX) / displayFrame.width * 1000),
+                     y: Double((displayFrame.maxY - globalPoint.y) / displayFrame.height * 1000))
+    }
+
     func point(_ p: DrawingPoint) -> CGPoint {
         CGPoint(x: CGFloat(p.x) * size.width / 1000,
                 y: size.height - CGFloat(p.y) * size.height / 1000)
@@ -240,18 +249,22 @@ struct CanvasMapper {
 /// discard the other elements in a spoken step.
 struct LossyDrawingList: Decodable {
     let elements: [DrawingElement]
+    let discardedCount: Int
 
     init(from decoder: Decoder) throws {
         var container = try decoder.unkeyedContainer()
         var valid: [DrawingElement] = []
+        var discarded = 0
         while !container.isAtEnd {
             if let element = try? container.decode(DrawingElement.self) {
                 valid.append(element)
             } else {
                 _ = try container.decode(DiscardDrawingValue.self)
+                discarded += 1
             }
         }
         elements = valid
+        discardedCount = discarded
     }
 }
 

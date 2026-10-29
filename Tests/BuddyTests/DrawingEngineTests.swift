@@ -115,4 +115,96 @@ final class DrawingEngineTests: XCTestCase {
         await fulfillment(of: [stale], timeout: 0.5)
         overlay.hide()
     }
+
+    func testEveryAdvertisedPrimitiveDecodesValidatesAndRenders() throws {
+        let point = p(300, 300)
+        let rect = r(200, 200, 200, 120)
+        let samples: [(DrawingKind, DrawingGeometry, String?)] = [
+            (.pointer, .point(point), nil), (.line, .segment(p(100, 100), point), nil),
+            (.polyline, .path([p(100, 100), point]), nil),
+            (.arrow, .segment(p(100, 100), point), nil),
+            (.curvedArrow, .cubic(p(100, 100), p(150, 50), p(250, 350), point), nil),
+            (.curve, .cubic(p(100, 100), p(150, 50), p(250, 350), point), nil),
+            (.circle, .rect(rect), nil), (.ellipse, .rect(rect), nil),
+            (.rect, .rect(rect), nil), (.roundedRect, .rect(rect), nil),
+            (.polygon, .path([p(100, 100), p(200, 100), point]), nil),
+            (.regularPolygon, .regularPolygon(rect, 5), nil),
+            (.underline, .rect(rect), nil), (.highlight, .rect(rect), nil),
+            (.spotlight, .rect(rect), nil), (.brace, .rect(rect), nil),
+            (.bracket, .rect(rect), nil), (.freehand, .path([p(100, 100), point]), nil),
+            (.label, .point(point), "Target"), (.explanatoryLabel, .point(point), "Why"),
+            (.badge, .point(point), "1")
+        ]
+        for (kind, geometry, text) in samples {
+            let encoded = try JSONEncoder().encode(DrawingElement(kind: kind, geometry: geometry, text: text))
+            let decoded = try JSONDecoder().decode(DrawingElement.self, from: encoded)
+            XCTAssertEqual(decoded.kind, kind)
+            XCTAssertTrue(decoded.isValid, "\(kind) should validate")
+            XCTAssertEqual(DrawingRenderer().render([decoded], mapper: mapper, backingScale: 2).count, 1,
+                           "\(kind) should render")
+        }
+    }
+
+    func testColorSelectionAndInvalidDrawingNeverBecomeHighlight() throws {
+        let red = #"{"type":"rect","rect":{"x":100,"y":100,"width":200,"height":100},"style":{"color":"red"},"purpose":"identify Settings"}"#
+        let element = try JSONDecoder().decode(DrawingElement.self, from: Data(red.utf8))
+        XCTAssertTrue(element.isValid)
+        let layer = try XCTUnwrap(DrawingRenderer().render([element], mapper: mapper, backingScale: 2).first?.layer as? CAShapeLayer)
+        XCTAssertNil(layer.fillColor)
+        XCTAssertNotNil(layer.strokeColor)
+        let unknown = #"{"type":"unknown","rect":{"x":100,"y":100,"width":200,"height":100}}"#
+        let invalid = try JSONDecoder().decode(DrawingElement.self, from: Data(unknown.utf8))
+        XCTAssertFalse(invalid.isValid)
+        XCTAssertTrue(DrawingRenderer().render([invalid], mapper: mapper, backingScale: 2).isEmpty)
+        let badColor = red.replacingOccurrences(of: "red", with: "chartreuse")
+        XCTAssertFalse(try JSONDecoder().decode(DrawingElement.self, from: Data(badColor.utf8)).isValid)
+    }
+
+    func testWholeScreenshotResizeAndSecondaryDisplayCoordinates() {
+        let frame = CGRect(x: -1200, y: 100, width: 1200, height: 800)
+        let displayMapper = CanvasMapper(size: frame.size)
+        let global = CGPoint(x: -900, y: 700)
+        let normalized = displayMapper.normalized(global, displayFrame: frame)
+        XCTAssertEqual(normalized, p(250, 250))
+        XCTAssertEqual(displayMapper.point(normalized), CGPoint(x: 300, y: 600))
+        XCTAssertEqual(Screen.accessibilityPoint(global, primaryDisplayTop: 900), CGPoint(x: -900, y: 200))
+        XCTAssertTrue(Screen.captureMatchesDisplay(pixelSize: CGSize(width: 1920, height: 1280), displayFrame: frame))
+        XCTAssertFalse(Screen.captureMatchesDisplay(pixelSize: CGSize(width: 1280, height: 800), displayFrame: frame))
+        // A 2x Retina image resized to 1280 pixels has the same normalized center.
+        XCTAssertEqual(displayMapper.point(p(500, 500)), CGPoint(x: 600, y: 400))
+    }
+
+    func testArrowPointerUsesEndpointAndSpotlightHoleIsTransparent() throws {
+        let arrow = DrawingElement(kind: .arrow, geometry: .segment(p(100, 100), p(750, 500)))
+        XCTAssertEqual(arrow.anchor, p(750, 500))
+        let curved = DrawingElement(kind: .curvedArrow,
+                                    geometry: .cubic(p(100, 100), p(200, 50), p(650, 450), p(750, 500)))
+        XCTAssertEqual(curved.anchor, p(750, 500))
+        let renderedArrow = try XCTUnwrap(DrawingRenderer().render([arrow], mapper: mapper, backingScale: 2).first)
+        let shaft = renderedArrow.layer.sublayers?.first as? CAShapeLayer
+        XCTAssertEqual(shaft?.path?.currentPoint, mapper.point(p(750, 500)))
+        let spotlight = DrawingElement(kind: .spotlight, geometry: .rect(r(100, 100, 300, 300)))
+        let mask = try XCTUnwrap(DrawingRenderer().render([spotlight], mapper: mapper, backingScale: 2).first?.layer as? CAShapeLayer)
+        let path = try XCTUnwrap(mask.path)
+        XCTAssertFalse(path.contains(mapper.point(p(250, 250)), using: .evenOdd, transform: .identity))
+        XCTAssertTrue(path.contains(mapper.point(p(900, 900)), using: .evenOdd, transform: .identity))
+    }
+
+    func testMultipleDrawingsAndLegacyFallbackSurviveInvalidNewPlan() throws {
+        _ = NSApplication.shared
+        let json = #"{"say":"Click Settings","drawings":[{"type":"unknown"}],"annotations":[{"type":"rect","box_2d":[100,200,250,400]}]}"#
+        let step = try JSONDecoder().decode(Step.self, from: Data(json.utf8))
+        let overlay = Overlay(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        overlay.showAnnotations(for: step, stepIndex: 0)
+        XCTAssertEqual(overlay.activeDrawingCount, 1)
+        overlay.cancel()
+        let two = Step(say: "Two targets", cue: nil, focus: nil, annotations: nil, keep: false,
+                       drawings: [DrawingElement(kind: .rect, geometry: .rect(r(100, 100, 150, 80))),
+                                  DrawingElement(kind: .arrow, geometry: .segment(p(400, 400), p(200, 150)))])
+        overlay.beginPresentation()
+        overlay.showAnnotations(for: two, stepIndex: 0)
+        XCTAssertEqual(overlay.activeDrawingCount, 2)
+        overlay.cancel()
+        XCTAssertEqual(overlay.activeDrawingCount, 0)
+    }
 }

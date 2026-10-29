@@ -17,6 +17,7 @@
 
 import AppKit
 import ApplicationServices
+import ImageIO
 
 // ---------------------------------------------------------------------------
 // MARK: - Capture result
@@ -60,13 +61,15 @@ enum Screen {
         // Extract value-type properties from NSScreen before crossing into the background queue,
         // since NSScreen itself is not Sendable.
         let screenFrame = screen.frame
-        let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        // screencapture -D uses a 1-based screen number, not NSScreenNumber's
+        // Core Graphics display ID. NSScreen.screens lists the main display first.
+        let displayNumber = (NSScreen.screens.firstIndex(of: screen) ?? 0) + 1
 
         // Run the blocking subprocess work on a background serial queue.
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    let result = try runCapture(displayID: screenID, displayFrame: screenFrame)
+                    let result = try runCapture(displayNumber: displayNumber, displayFrame: screenFrame)
                     continuation.resume(returning: result)
                 } catch {
                     continuation.resume(throwing: error)
@@ -79,17 +82,12 @@ enum Screen {
     // MARK: Internal blocking capture (runs on background queue only)
     // -------------------------------------------------------------------------
 
-    private static func runCapture(displayID: CGDirectDisplayID?, displayFrame: CGRect) throws -> CaptureResult {
-        let filePath = NSTemporaryDirectory() + "buddy_capture.jpg"
-        try? FileManager.default.removeItem(atPath: filePath)
+    private static func runCapture(displayNumber: Int, displayFrame: CGRect) throws -> CaptureResult {
+        let filePath = NSTemporaryDirectory() + "buddy_capture_\(UUID().uuidString).jpg"
+        defer { try? FileManager.default.removeItem(atPath: filePath) }
 
-        // screencapture: -x = no sounds; -D <id> targets a specific display.
-        var scArgs = ["-x", "-t", "jpg"]
-        if let sid = displayID {
-            scArgs += ["-D", "\(sid)"]
-        } else {
-            scArgs += ["-m"]   // fallback: main display
-        }
+        // -D 1 is main; -D 2 is the first secondary display.
+        var scArgs = ["-x", "-t", "jpg", "-D", "\(displayNumber)"]
         scArgs.append(filePath)
 
         try runProcess("/usr/sbin/screencapture", args: scArgs, timeout: 5)
@@ -104,8 +102,24 @@ enum Screen {
             throw screenError("Screenshot failed or was empty. Check Screen Recording permission in System Settings → Privacy & Security.")
         }
 
-        blogInfo("[SCREEN] \(RequestClock.shared.elapsed) captured \(data.count / 1024) KB")
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              captureMatchesDisplay(pixelSize: CGSize(width: CGFloat(width), height: CGFloat(height)), displayFrame: displayFrame) else {
+            throw screenError("The captured image does not match the selected display. Try again after checking display settings.")
+        }
+
+        blogInfo("[SCREEN] \(RequestClock.shared.elapsed) display=\(displayNumber) image=\(width)x\(height) frame=\(Int(displayFrame.width))x\(Int(displayFrame.height)) points, \(data.count / 1024) KB")
         return CaptureResult(jpeg: data, displayFrame: displayFrame)
+    }
+
+    /// sips only scales the full image, so aspect ratios must agree. A mismatch
+    /// means the screenshot and overlay cannot share normalized coordinates.
+    static func captureMatchesDisplay(pixelSize: CGSize, displayFrame: CGRect) -> Bool {
+        guard pixelSize.width > 0, pixelSize.height > 0,
+              displayFrame.width > 0, displayFrame.height > 0 else { return false }
+        return abs(pixelSize.width / pixelSize.height - displayFrame.width / displayFrame.height) < 0.02
     }
 
     // -------------------------------------------------------------------------
@@ -134,15 +148,14 @@ enum Screen {
     // -------------------------------------------------------------------------
 
     /// Returns a human-readable description of the UI element at the given
-    /// AppKit-coord point (origin bottom-left). screenH is the height of the
-    /// display the point lives on.
-    static func elementUnder(_ point: CGPoint, screenH: CGFloat) -> String {
+    /// AppKit-coord point (origin bottom-left). AX uses the primary display's
+    /// top-left origin, including for points on a secondary display.
+    static func elementUnder(_ point: CGPoint, primaryDisplayTop: CGFloat) -> String {
         guard AXIsProcessTrusted() else { return "" }
-        // AX uses CG coordinates (top-left origin): flip Y.
-        let axY = Float(screenH - point.y)
+        let axPoint = accessibilityPoint(point, primaryDisplayTop: primaryDisplayTop)
         var el: AXUIElement?
         guard AXUIElementCopyElementAtPosition(
-                AXUIElementCreateSystemWide(), Float(point.x), axY, &el) == .success,
+                AXUIElementCreateSystemWide(), Float(axPoint.x), Float(axPoint.y), &el) == .success,
               let element = el else { return "" }
 
         func attr(_ key: String) -> String {
@@ -155,6 +168,10 @@ enum Screen {
         let desc  = attr("AXDescription")
         let val   = attr("AXValue")
         return "element under cursor: role=\(role) title=\(title) desc=\(desc) value=\(val)"
+    }
+
+    static func accessibilityPoint(_ point: CGPoint, primaryDisplayTop: CGFloat) -> CGPoint {
+        CGPoint(x: point.x, y: primaryDisplayTop - point.y)
     }
 
     // -------------------------------------------------------------------------

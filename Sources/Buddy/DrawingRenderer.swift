@@ -52,15 +52,23 @@ final class DrawingRenderer {
     struct Palette {
         static let primary = NSColor(srgbRed: 0.96, green: 0.25, blue: 0.48, alpha: 1)
         static let blue = NSColor.systemBlue
+        static let cyan = NSColor.systemCyan
+        static let amber = NSColor(srgbRed: 1, green: 0.72, blue: 0.16, alpha: 1)
         static let highlight = NSColor(srgbRed: 1, green: 0.80, blue: 0.27, alpha: 0.25)
         static let dim = NSColor.black.withAlphaComponent(0.55)
     }
 
     let maxElementsPerStep = 8
+    private let debugDrawings = ProcessInfo.processInfo.environment["BUDDY_DRAW_DEBUG"] == "1"
 
     func render(_ elements: [DrawingElement], mapper: CanvasMapper, backingScale: CGFloat) -> [RenderedDrawing] {
-        let rejected = elements.filter { !$0.isValid }.count
-        if rejected > 0 { blogWarn("[DRAWING] Skipped \(rejected) invalid element(s)") }
+        let rejected = elements.filter { !$0.isValid }
+        if !rejected.isEmpty {
+            blogWarn("[DRAWING] Skipped \(rejected.count) invalid element(s): \(rejected.map(\.type).joined(separator: ","))")
+        }
+        if debugDrawings {
+            blogDebug("[DRAWING] requested=\(elements.count) types=\(elements.map(\.type).joined(separator: ",")) canvas=\(Int(mapper.size.width))x\(Int(mapper.size.height))")
+        }
         let ordered = elements.enumerated().filter { $0.element.isValid }
             .sorted { left, right in
                 let a = left.element.order ?? left.offset
@@ -76,6 +84,10 @@ final class DrawingRenderer {
         }
         for (_, element) in ordered {
             guard result.count < maxElementsPerStep, seen.insert(element.id).inserted else { continue }
+            if debugDrawings, let anchor = element.anchor {
+                let mapped = mapper.point(anchor)
+                blogDebug("[DRAWING] type=\(element.type) anchor=\(Int(anchor.x)),\(Int(anchor.y)) local=\(Int(mapped.x)),\(Int(mapped.y))")
+            }
             let targetArea: CGRect?
             if let targetID = element.targetID, let target = targets[targetID] {
                 switch target.geometry {
@@ -92,7 +104,14 @@ final class DrawingRenderer {
     }
 
     private func color(_ element: DrawingElement) -> NSColor {
-        element.style?.color == "blue" ? Palette.blue : Palette.primary
+        switch element.style?.color {
+        case "blue": return Palette.blue
+        case "cyan": return Palette.cyan
+        case "yellow": return NSColor.systemYellow
+        case "amber": return Palette.amber
+        case "white": return .white
+        default: return Palette.primary // primary, red, coral
+        }
     }
 
     private func shape(_ path: CGPath, element: DrawingElement, mapper: CanvasMapper,
@@ -145,14 +164,15 @@ final class DrawingRenderer {
         guard let kind = e.kind else { return nil }
         let ink = color(e).cgColor
         let duration = e.duration ?? 0.35
-        var path = CGMutablePath()
+        let path = CGMutablePath()
 
         switch (kind, e.geometry) {
         case (.highlight, .rect(let r)):
             let layer = CALayer()
             layer.frame = mapper.rect(r)
             let alpha = CGFloat(min(e.style?.fillOpacity ?? 0.25, 0.30))
-            layer.backgroundColor = Palette.highlight.withAlphaComponent(alpha).cgColor
+            layer.backgroundColor = (e.style?.color == nil ? Palette.highlight : color(e))
+                .withAlphaComponent(alpha).cgColor
             layer.cornerRadius = 6
             layer.opacity = Float(e.style?.opacity ?? 1)
             layer.contentsScale = scale

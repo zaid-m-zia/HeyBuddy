@@ -175,7 +175,11 @@ struct Step: Codable {
         focus = try? c.decode([Double].self, forKey: .focus)
         annotations = try? c.decode([Annotation].self, forKey: .annotations)
         keep = try? c.decode(Bool.self, forKey: .keep)
-        drawings = (try? c.decode(LossyDrawingList.self, forKey: .drawings))?.elements
+        let drawingList = try? c.decode(LossyDrawingList.self, forKey: .drawings)
+        drawings = drawingList?.elements
+        if let discarded = drawingList?.discardedCount, discarded > 0 {
+            blogWarn("[DRAWING] Discarded \(discarded) malformed drawing value(s)")
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -241,8 +245,10 @@ final class Brain {
         """
         You are \(Settings.name), a friendly AI buddy that lives next to the user's mouse cursor on macOS.
         You get a screenshot, what the user said, and cursor gesture info.
-        Coordinates are normalized 0-1000 over the screenshot. Points are [y, x] (origin top-left, y down, x right).
-        Boxes are box_2d: [ymin, xmin, ymax, xmax].
+        You see one full-display screenshot resized without cropping. Base every target on
+        objects actually visible in that image; do not guess typical macOS locations.
+        New drawings use a top-left 0-1000 grid: x increases right, y increases down.
+        Legacy focus uses [y, x]; legacy box_2d uses [ymin, xmin, ymax, xmax].
 
         Reply with ONLY valid JSON in this shape (choose real values, and use empty arrays when no drawing or action helps):
         {
@@ -252,7 +258,7 @@ final class Brain {
               "cue": "heading",
               "focus": [180, 120],
               "drawings": [
-                {"id": "heading-1", "type": "underline", "rect": {"x": 120, "y": 180, "width": 260, "height": 35}, "order": 0, "duration": 0.35}
+                {"id": "heading-1", "type": "underline", "rect": {"x": 120, "y": 180, "width": 260, "height": 35}, "style": {"color": "amber"}, "purpose": "emphasize the visible heading", "order": 0, "duration": 0.35}
               ],
               "keep": false
             }
@@ -264,10 +270,15 @@ final class Brain {
         - At most 6 steps. "say" is spoken aloud: concise, warm, natural, zero markdown.
         - Prefer "drawings" for new visuals; do not send both "drawings" and legacy "annotations" in one step.
         - Drawing coordinates are top-left normalized 0-1000. Points use {"x": number, "y": number}; rects use {"x": number, "y": number, "width": number, "height": number}. Keep every shape inside the grid.
+        - Choose each drawing from the user's question, the visible target, and what that spoken step explains. Return multiple coordinated drawings when useful; never add shapes just for variety.
+        - For a click target or bounded UI region use a tight red/coral outline rect, optionally with an arrow whose "to" point touches that target. For a small icon use a circle or ellipse. For text/value emphasis use a narrow translucent yellow/amber highlight or underline. Use a spotlight briefly for one target in a crowded interface. Use lines/arrows for relationships; badges for real sequences; brackets/braces for groups.
+        - A UI target is usually better served by an outline than a broad yellow highlight. Do not highlight entire windows or unrelated content.
+        - Give every drawing a short "purpose" and, when useful, a short "targetID" linking a label to a drawn target. Set "cue" to the exact phrase in "say" that introduces the drawing.
+        - Include a center "point" for pointers, labels and badges; a tight "rect" for full visible targets; endpoints for arrows/lines. Use the supplied screenshot itself to place them. If the target is not visible or cannot be localized confidently, explain that and return no drawing.
+        - Valid style colors are primary, red, coral, blue, cyan, yellow, amber, white. Outlines have no opaque fill; highlights remain translucent. Prefer red/coral for UI outlines, blue/cyan for direction, yellow/amber for text emphasis.
         - Supported drawing types: pointer, line, polyline, arrow, curvedArrow, curve, circle, ellipse, rect, roundedRect, polygon, regularPolygon, underline, highlight, spotlight, brace, bracket, freehand, label, explanatoryLabel, badge.
         - line and arrow use "from" and "to" points; curvedArrow and curve also use "control1" and "control2" points; polyline, polygon, and freehand use "points"; regularPolygon uses "rect" and "sides" (3-12). Labels and badges use "point" and real "text".
         - Use at most 8 purposeful drawings per step. Use "order" for a meaningful sequence and "cue" for the exact phrase when the drawings should appear.
-        - Underline headings or key text; use arrows for direction or relationships, circles/polygons for regions, numbered badges for actual sequences, braces/brackets for groups, and translucent highlights for emphasis. Do not default to rectangles.
         - Tight boxes around real elements. Use spotlight only to focus attention briefly.
         - Coordinates from vision are estimates. If a target is uncertain, explain without drawing; never invent precise placement confidently.
         - Draw NOTHING when it doesn't help. If unsure of a location, say so and draw nothing.

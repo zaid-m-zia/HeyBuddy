@@ -387,13 +387,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.setLabel("thinking…")
         transition(to: .processing)
 
-        let gestureDesc = describeGesture()
         let generation = interactionGeneration
         let captureTask = screenshotTask
 
         // Stage 2: the request runs in a stored Task so it can be cancelled.
         requestTask = Task { [weak self] in
-            await self?.runRequest(gesture: gestureDesc, generation: generation, captureTask: captureTask)
+            await self?.runRequest(generation: generation, captureTask: captureTask)
         }
 
         // Stage 2: watchdog – if processing/presenting exceeds 30 s, abort.
@@ -417,7 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Request pipeline (Stages 1, 2, 5)
     // -------------------------------------------------------------------------
 
-    private func runRequest(gesture: String, generation: Int, captureTask: Task<CaptureResult, Error>?) async {
+    private func runRequest(generation: Int, captureTask: Task<CaptureResult, Error>?) async {
         // Stage 4: await the final transcript.
         let rawText = await ears.stop()
         guard !Task.isCancelled, generation == interactionGeneration else { return }
@@ -443,7 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Stage 5: await the screenshot task that started at key press.
-        let capture: CaptureResult
+        var capture: CaptureResult
         do {
             if let st = captureTask {
                 capture = try await st.value
@@ -452,6 +451,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 // Fallback: capture now (shouldn't normally happen).
                 blogWarn("[SCREEN] no pre-started screenshot task, capturing now")
+                capture = try await Screen.capture()
+            }
+            // The pre-started capture may be from another display if the user
+            // moved the cursor across monitors while speaking.
+            if let last = path.last, !capture.displayFrame.contains(last) {
+                blogInfo("[SCREEN] cursor changed displays; capturing its final display")
                 capture = try await Screen.capture()
             }
             // Update overlay to use same display as screenshot.
@@ -473,6 +478,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         blogInfo("[SCREEN] \(RequestClock.shared.elapsed) \(capture.jpeg.count / 1024) KB ready")
+        let gesture = describeGesture(displayFrame: capture.displayFrame)
 
         // Call Gemini.
         let plan: Plan
@@ -638,27 +644,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Gesture detection (Stage 1 – logs added; Stage 8 – display-aware)
     // -------------------------------------------------------------------------
 
-    private func describeGesture() -> String {
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })
-                ?? NSScreen.screens.first else { return "" }
-        let s = screen.frame
-        guard path.count > 5, let last = path.last, let first = path.first else { return "" }
+    private func describeGesture(displayFrame s: CGRect) -> String {
+        let capturedPath = path.filter { s.contains($0) }
+        guard capturedPath.count > 5, let last = capturedPath.last,
+              let first = capturedPath.first else { return "" }
 
-        let xs = path.map { $0.x }, ys = path.map { $0.y }
+        let xs = capturedPath.map { $0.x }, ys = capturedPath.map { $0.y }
         guard let minX = xs.min(), let maxX = xs.max(),
               let minY = ys.min(), let maxY = ys.max() else { return "" }
 
         let w = maxX - minX, h = maxY - minY
 
         // Convert AppKit bottom-left coords to model's top-left grid (0-1000).
-        func nx(_ v: CGFloat) -> Int { Int((v - s.minX) / s.width  * 1000) }
-        func ny(_ v: CGFloat) -> Int { Int((s.maxY - v) / s.height * 1000) }
+        let mapper = CanvasMapper(size: s.size)
+        func nx(_ v: CGFloat) -> Int { Int(mapper.normalized(CGPoint(x: v, y: s.midY), displayFrame: s).x) }
+        func ny(_ v: CGFloat) -> Int { Int(mapper.normalized(CGPoint(x: s.midX, y: v), displayFrame: s).y) }
 
         var len: CGFloat = 0
-        for i in 1..<path.count { len += hypot(path[i].x - path[i-1].x, path[i].y - path[i-1].y) }
+        for i in 1..<capturedPath.count { len += hypot(capturedPath[i].x - capturedPath[i-1].x, capturedPath[i].y - capturedPath[i-1].y) }
         let closed = hypot(first.x - last.x, first.y - last.y) < max(w, h) * 0.4
         let box = "x \(nx(minX))-\(nx(maxX)), y \(ny(maxY))-\(ny(minY))"
-        let under = Screen.elementUnder(last, screenH: s.height)
+        let under = Screen.elementUnder(last, primaryDisplayTop: NSScreen.screens.first?.frame.maxY ?? s.maxY)
 
         let gesture: String
         if max(w, h) > 60 && closed && len > (w + h) * 1.5 {
