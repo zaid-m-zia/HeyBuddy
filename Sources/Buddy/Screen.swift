@@ -5,7 +5,7 @@
 //   - capture() now runs screencapture + sips on a background DispatchQueue
 //     inside a CheckedContinuation, so it NEVER blocks the main thread or a
 //     Swift Concurrency cooperative thread (which is forbidden by the runtime).
-//   - A 3 s per-step timeout wraps each process; the overall call also has a
+//   - A 5 s per-step timeout wraps each process; the overall call also has a
 //     ceiling enforced by the Task deadline upstream.
 //   - Captures the display the cursor is currently on (not always .main), and
 //     returns that display's frame for coordinate mapping by the overlay.
@@ -13,7 +13,7 @@
 //     produces a clear error rather than a silent empty file.
 //   - Output file size is validated (> 1 KB) to catch silent failures.
 //   - Force-unwraps on NSScreen.main removed.
-//   - elementUnder uses the passed-in screenH (no internal screen lookup).
+//   - elementUnder uses the primary display's top edge for global AX coordinates.
 
 import AppKit
 import ApplicationServices
