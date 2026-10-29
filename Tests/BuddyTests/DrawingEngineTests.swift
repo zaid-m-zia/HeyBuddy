@@ -222,4 +222,24 @@ final class DrawingEngineTests: XCTestCase {
         XCTAssertEqual(second.say, "Keep speaking")
         XCTAssertEqual(second.drawings?.filter(\.isValid).count, 0)
     }
+
+    func testUniqueLocalOCRSnapsTextAndArrowButPreservesUIOutline() throws {
+        let target = try XCTUnwrap(OCRTarget(text: "Settings", visionBox: CGRect(x: 0.20, y: 0.60, width: 0.10, height: 0.05)))
+        XCTAssertEqual(target.rect, r(200, 350, 100, 50))
+        let original = [
+            DrawingElement(kind: .highlight, geometry: .rect(r(180, 330, 140, 80)), targetText: "Settings"),
+            DrawingElement(kind: .arrow, geometry: .segment(p(100, 100), p(300, 300)), targetText: "Settings"),
+            DrawingElement(kind: .rect, geometry: .rect(r(170, 310, 180, 110)), targetText: "Settings")
+        ]
+        let plan = Plan(steps: [Step(say: "Open Settings", cue: nil, focus: nil,
+                                     annotations: nil, keep: false, drawings: original)],
+                        actions: nil, say: nil, points: nil)
+        let refined = DrawingTargetResolver.refine(plan, targets: [target])
+        let drawings = try XCTUnwrap(refined.steps?.first?.drawings)
+        XCTAssertEqual(drawings[0].geometry, .rect(target.rect))
+        XCTAssertEqual(drawings[1].geometry, .segment(p(100, 100), p(250, 375)))
+        XCTAssertEqual(drawings[2].geometry, original[2].geometry)
+        let ambiguous = DrawingTargetResolver.refine(plan, targets: [target, target])
+        XCTAssertEqual(ambiguous.steps?.first?.drawings?[0].geometry, original[0].geometry)
+    }
 }

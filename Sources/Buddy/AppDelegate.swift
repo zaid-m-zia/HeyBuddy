@@ -485,7 +485,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try Task.checkCancellation()
             guard generation == interactionGeneration else { return }
-            plan = try await brain.ask(text: text, image: capture.jpeg, gesture: gesture)
+            let modelPlan = try await brain.ask(text: text, image: capture.jpeg, gesture: gesture)
+            let targets = capture.ocr.available ?? []
+            plan = DrawingTargetResolver.refine(modelPlan, targets: targets)
+            if ProcessInfo.processInfo.environment["BUDDY_DRAW_DEBUG"] == "1" {
+                blogDebug("[DRAWING] localOCR=\(targets.count) ready=\(capture.ocr.available != nil)")
+            }
         } catch is CancellationError {
             blogInfo("[BRAIN] request cancelled")
             return

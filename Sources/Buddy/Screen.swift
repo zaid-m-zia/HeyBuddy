@@ -18,6 +18,7 @@
 import AppKit
 import ApplicationServices
 import ImageIO
+import Vision
 
 // ---------------------------------------------------------------------------
 // MARK: - Capture result
@@ -28,6 +29,25 @@ import ImageIO
 struct CaptureResult {
     let jpeg: Data
     let displayFrame: CGRect  // AppKit coords (bottom-left origin)
+    let ocr: OCRSnapshot
+}
+
+/// OCR runs in parallel with Gemini. Reading this snapshot never waits for it.
+final class OCRSnapshot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [OCRTarget]?
+
+    func set(_ targets: [OCRTarget]) {
+        lock.lock()
+        stored = targets
+        lock.unlock()
+    }
+
+    var available: [OCRTarget]? {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +131,28 @@ enum Screen {
         }
 
         blogInfo("[SCREEN] \(RequestClock.shared.elapsed) display=\(displayNumber) image=\(width)x\(height) frame=\(Int(displayFrame.width))x\(Int(displayFrame.height)) points, \(data.count / 1024) KB")
-        return CaptureResult(jpeg: data, displayFrame: displayFrame)
+        let ocr = OCRSnapshot()
+        DispatchQueue.global(qos: .utility).async {
+            ocr.set(recognizedText(in: data))
+        }
+        return CaptureResult(jpeg: data, displayFrame: displayFrame, ocr: ocr)
+    }
+
+    private static func recognizedText(in jpeg: Data) -> [OCRTarget] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .fast
+        request.usesLanguageCorrection = false
+        do {
+            try VNImageRequestHandler(data: jpeg, options: [:]).perform([request])
+        } catch {
+            blogWarn("[DRAWING] Local OCR unavailable")
+            return []
+        }
+        return (request.results ?? []).compactMap { observation in
+            guard let candidate = observation.topCandidates(1).first,
+                  candidate.confidence >= 0.5 else { return nil }
+            return OCRTarget(text: candidate.string, visionBox: observation.boundingBox)
+        }
     }
 
     /// sips only scales the full image, so aspect ratios must agree. A mismatch

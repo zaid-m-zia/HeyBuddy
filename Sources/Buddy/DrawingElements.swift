@@ -74,6 +74,7 @@ struct DrawingElement: Codable {
     var duration: Double?
     var order: Int?
     var targetID: String?
+    var targetText: String? // Exact visible text, for conservative local OCR alignment.
     var purpose: String?
 
     var kind: DrawingKind? { DrawingKind(rawValue: type) }
@@ -91,17 +92,19 @@ struct DrawingElement: Codable {
 
     init(id: String = UUID().uuidString, kind: DrawingKind, geometry: DrawingGeometry,
          text: String? = nil, style: DrawingStyle? = nil, duration: Double? = nil,
-         order: Int? = nil, targetID: String? = nil, purpose: String? = nil) {
+         order: Int? = nil, targetID: String? = nil, targetText: String? = nil,
+         purpose: String? = nil) {
         self.id = id; self.type = kind.rawValue; self.geometry = geometry
         self.text = text; self.style = style; self.duration = duration
-        self.order = order; self.targetID = targetID; self.purpose = purpose
+        self.order = order; self.targetID = targetID; self.targetText = targetText; self.purpose = purpose
     }
 
     var isValid: Bool {
         guard let kind, geometry.isValid, style?.isValid ?? true,
               (duration.map { $0.isFinite && (0.10...2.0).contains($0) } ?? true),
               (order.map { (0...100).contains($0) } ?? true),
-              id.count <= 80, (targetID?.count ?? 0) <= 80, (purpose?.count ?? 0) <= 120 else { return false }
+              id.count <= 80, (targetID?.count ?? 0) <= 80,
+              (targetText?.count ?? 0) <= 80, (purpose?.count ?? 0) <= 120 else { return false }
         if let text, text.count > 80 { return false }
         switch (kind, geometry) {
         case (.pointer, .point(_)), (.badge, .point(_)), (.label, .point(_)), (.explanatoryLabel, .point(_)):
@@ -120,7 +123,7 @@ struct DrawingElement: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case id, type, point, rect, from, to, control1, control2, points, sides
-        case text, label, style, duration, order, targetID, purpose
+        case text, label, style, duration, order, targetID, targetText, purpose
     }
 
     init(from decoder: Decoder) throws {
@@ -132,6 +135,7 @@ struct DrawingElement: Codable {
         duration = try? c.decode(Double.self, forKey: .duration)
         order = try? c.decode(Int.self, forKey: .order)
         targetID = try? c.decode(String.self, forKey: .targetID)
+        targetText = try? c.decode(String.self, forKey: .targetText)
         purpose = try? c.decode(String.self, forKey: .purpose)
         if (c.contains(.style) && style == nil) ||
             (c.contains(.duration) && duration == nil) ||
@@ -170,7 +174,9 @@ struct DrawingElement: Codable {
         try c.encode(id, forKey: .id); try c.encode(type, forKey: .type)
         try c.encodeIfPresent(text, forKey: .text); try c.encodeIfPresent(style, forKey: .style)
         try c.encodeIfPresent(duration, forKey: .duration); try c.encodeIfPresent(order, forKey: .order)
-        try c.encodeIfPresent(targetID, forKey: .targetID); try c.encodeIfPresent(purpose, forKey: .purpose)
+        try c.encodeIfPresent(targetID, forKey: .targetID)
+        try c.encodeIfPresent(targetText, forKey: .targetText)
+        try c.encodeIfPresent(purpose, forKey: .purpose)
         switch geometry {
         case .point(let p): try c.encode(p, forKey: .point)
         case .rect(let r): try c.encode(r, forKey: .rect)
@@ -215,6 +221,61 @@ struct DrawingElement: Codable {
         }
         let element = DrawingElement(kind: kind, geometry: geometry, text: a.text ?? a.label)
         return element.isValid ? element : nil
+    }
+}
+
+/// Vision supplies bottom-left unit boxes. Convert them once to the model's
+/// top-left 0...1000 grid, independently of Retina scale or JPEG resizing.
+struct OCRTarget {
+    let text: String
+    let rect: DrawingRect
+
+    init?(text: String, visionBox: CGRect) {
+        let rect = DrawingRect(x: Double(visionBox.minX * 1000),
+                               y: Double((1 - visionBox.maxY) * 1000),
+                               width: Double(visionBox.width * 1000),
+                               height: Double(visionBox.height * 1000))
+        guard rect.isValid, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        self.text = text
+        self.rect = rect
+    }
+}
+
+/// Snap only to one exact OCR match. Ambiguous or missing text leaves the model's
+/// coordinates untouched, and UI outlines keep their full model-selected bounds.
+enum DrawingTargetResolver {
+    static func refine(_ plan: Plan, targets: [OCRTarget]) -> Plan {
+        var result = plan
+        result.steps = plan.steps?.map { step in
+            var updated = step
+            updated.drawings = step.drawings?.map { element in
+                guard let text = element.targetText?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !text.isEmpty, element.isValid else { return element }
+                let matches = targets.filter {
+                    $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .localizedCaseInsensitiveCompare(text) == .orderedSame
+                }
+                guard matches.count == 1, let target = matches.first else { return element }
+                var snapped = element
+                let rect = target.rect
+                let center = DrawingPoint(x: rect.x + rect.width / 2,
+                                          y: rect.y + rect.height / 2)
+                switch (element.kind, element.geometry) {
+                case (.highlight, .rect(_)), (.underline, .rect(_)):
+                    snapped.geometry = .rect(rect)
+                case (.arrow, .segment(let start, _)):
+                    snapped.geometry = .segment(start, center)
+                case (.curvedArrow, .cubic(let start, let c1, let c2, _)):
+                    snapped.geometry = .cubic(start, c1, c2, center)
+                case (.pointer, .point(_)):
+                    snapped.geometry = .point(center)
+                default: break
+                }
+                return snapped.isValid ? snapped : element
+            }
+            return updated
+        }
+        return result
     }
 }
 
