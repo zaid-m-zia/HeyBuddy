@@ -304,14 +304,15 @@ final class DrawingRenderer {
         let tangent: CGPoint
         if let control1, let control2 {
             shaftPath.addCurve(to: end, control1: control1, control2: control2)
-            tangent = CGPoint(x: end.x - control2.x, y: end.y - control2.y)
+            let finalHandle = hypot(end.x - control2.x, end.y - control2.y) > 0.01 ? control2 : control1
+            tangent = CGPoint(x: end.x - finalHandle.x, y: end.y - finalHandle.y)
         } else {
             shaftPath.addLine(to: end)
             tangent = CGPoint(x: end.x - start.x, y: end.y - start.y)
         }
         let shaft = shape(shaftPath, element: element, mapper: mapper, scale: scale, stroke: ink)
         let angle = atan2(tangent.y, tangent.x)
-        let length: CGFloat = 16
+        let length = min(16, max(5, hypot(end.x - start.x, end.y - start.y) * 0.35))
         let headPath = CGMutablePath()
         headPath.move(to: CGPoint(x: end.x - length * cos(angle - .pi / 6),
                                   y: end.y - length * sin(angle - .pi / 6)))

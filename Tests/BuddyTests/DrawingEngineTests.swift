@@ -204,7 +204,22 @@ final class DrawingEngineTests: XCTestCase {
         overlay.beginPresentation()
         overlay.showAnnotations(for: two, stepIndex: 0)
         XCTAssertEqual(overlay.activeDrawingCount, 2)
+        overlay.beginPresentation()
+        overlay.showAnnotations(for: step, stepIndex: 0)
+        XCTAssertEqual(overlay.activeDrawingCount, 1, "A new request must replace old layers and step indices")
         overlay.cancel()
         XCTAssertEqual(overlay.activeDrawingCount, 0)
+    }
+
+    func testSpeechStepSurvivesEmptyAndMalformedDrawingLists() throws {
+        let empty = #"{"say":"Here is the answer","cue":"answer","drawings":[]}"#
+        let malformed = #"{"say":"Keep speaking","drawings":[23,{"type":"unknown"}]}"#
+        let first = try JSONDecoder().decode(Step.self, from: Data(empty.utf8))
+        let second = try JSONDecoder().decode(Step.self, from: Data(malformed.utf8))
+        XCTAssertEqual(first.say, "Here is the answer")
+        XCTAssertEqual(first.cue, "answer")
+        XCTAssertEqual(first.drawings?.count, 0)
+        XCTAssertEqual(second.say, "Keep speaking")
+        XCTAssertEqual(second.drawings?.filter(\.isValid).count, 0)
     }
 }

@@ -21,10 +21,14 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
     private var stepIndicesByUtterance: [AVSpeechUtterance: Int] = [:]
     private var cueOffsetsByStep: [Int: Int] = [:] // stepIndex -> character offset of cue in say
     private var triggeredCues: Set<Int> = []
+    private var startedSteps: Set<Int> = []
+    private var finishedSteps: Set<Int> = []
     private var completionHandler: (() -> Void)?
 
     // Fallback timer for silent or failed speech playback
     private var fallbackTimer: DispatchWorkItem?
+    private var completionWatchdog: DispatchWorkItem?
+    private var completionWatchdogStep: Int?
 
     init(overlay: Overlay) {
         self.overlay = overlay
@@ -51,6 +55,8 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
         self.stepIndicesByUtterance.removeAll()
         self.cueOffsetsByStep.removeAll()
         self.triggeredCues.removeAll()
+        self.startedSteps.removeAll()
+        self.finishedSteps.removeAll()
 
         overlay?.beginPresentation()
 
@@ -87,10 +93,16 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
         generation += 1
         fallbackTimer?.cancel()
         fallbackTimer = nil
+        completionWatchdog?.cancel()
+        completionWatchdog = nil
+        completionWatchdogStep = nil
         synth.stopSpeaking(at: .immediate)
         stepIndicesByUtterance.removeAll()
         cueOffsetsByStep.removeAll()
         triggeredCues.removeAll()
+        startedSteps.removeAll()
+        finishedSteps.removeAll()
+        steps.removeAll()
         completionHandler = nil
         overlay?.cancel()
     }
@@ -136,8 +148,8 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
     // -------------------------------------------------------------------------
 
     private func handleStepStart(_ idx: Int) {
+        guard idx < steps.count, startedSteps.insert(idx).inserted else { return }
         fallbackTimer?.cancel()
-        guard idx < steps.count else { return }
         let step = steps[idx]
         blogInfo("[PLAYER] didStart step \(idx + 1)/\(steps.count)")
 
@@ -148,10 +160,12 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
         if cueOffsetsByStep[idx] == nil {
             overlay?.showAnnotations(for: step, stepIndex: idx)
         }
+        armCompletionWatchdog(gen: generation, stepIndex: idx)
     }
 
     private func handleSpeechRange(_ range: NSRange, stepIndex: Int) {
-        guard let cueOffset = cueOffsetsByStep[stepIndex], !triggeredCues.contains(stepIndex) else { return }
+        guard let cueOffset = cueOffsetsByStep[stepIndex],
+              !finishedSteps.contains(stepIndex), !triggeredCues.contains(stepIndex) else { return }
         if range.location >= cueOffset {
             triggeredCues.insert(stepIndex)
             guard stepIndex < steps.count else { return }
@@ -161,7 +175,12 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private func handleStepFinish(_ idx: Int) {
-        guard idx < steps.count else { return }
+        guard idx < steps.count, finishedSteps.insert(idx).inserted else { return }
+        if completionWatchdogStep == idx {
+            completionWatchdog?.cancel()
+            completionWatchdog = nil
+            completionWatchdogStep = nil
+        }
         let step = steps[idx]
         blogInfo("[PLAYER] didFinish step \(idx + 1)/\(steps.count)")
 
@@ -173,6 +192,7 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
         let isLast = (idx == steps.count - 1)
         if !isLast {
             overlay?.finishStep(step, stepIndex: idx)
+            armFallbackWatchdog(gen: generation, stepIndex: idx + 1)
         } else {
             // Last step: hold final annotations for 2.5s before cleanup
             overlay?.finishStep(step, stepIndex: idx, preserveAnnotations: true)
@@ -181,6 +201,8 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
                 guard let self, self.generation == gen else { return }
                 self.overlay?.finishPresentation { [weak self] in
                     guard let self, self.generation == gen else { return }
+                    self.synth.stopSpeaking(at: .immediate)
+                    self.stepIndicesByUtterance.removeAll()
                     let cb = self.completionHandler
                     self.completionHandler = nil
                     cb?()
@@ -195,27 +217,43 @@ final class PresentationPlayer: NSObject, AVSpeechSynthesizerDelegate {
 
     private func armFallbackWatchdog(gen: Int, stepIndex: Int) {
         fallbackTimer?.cancel()
-        guard stepIndex < steps.count else { return }
+        guard stepIndex < steps.count, !startedSteps.contains(stepIndex) else { return }
         let step = steps[stepIndex]
         let wordCount = max(1, step.say.split(separator: " ").count)
         // 160 words per minute = ~375ms per word + 500ms baseline buffer
         let duration = Double(wordCount) * 0.375 + 0.6
 
         let item = DispatchWorkItem { [weak self] in
-            guard let self, self.generation == gen else { return }
+            guard let self, self.generation == gen,
+                  !self.startedSteps.contains(stepIndex) else { return }
             blogWarn("[PLAYER] Fallback timer fired for step \(stepIndex + 1)")
             self.handleStepStart(stepIndex)
-            self.handleSpeechRange(NSRange(location: 0, length: 1), stepIndex: stepIndex)
+            // No word callbacks arrived, so show the step's drawings with its
+            // simulated start instead of waiting until after its speech.
+            self.overlay?.showAnnotations(for: step, stepIndex: stepIndex)
 
             DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
                 guard let self, self.generation == gen else { return }
                 self.handleStepFinish(stepIndex)
-                if stepIndex + 1 < self.steps.count {
-                    self.armFallbackWatchdog(gen: gen, stepIndex: stepIndex + 1)
-                }
             }
         }
         fallbackTimer = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: item)
+    }
+
+    private func armCompletionWatchdog(gen: Int, stepIndex: Int) {
+        completionWatchdog?.cancel()
+        guard stepIndex < steps.count else { return }
+        let words = max(1, steps[stepIndex].say.split(separator: " ").count)
+        let timeout = max(8.0, Double(words) * 1.1 + 5.0)
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == gen,
+                  !self.finishedSteps.contains(stepIndex) else { return }
+            blogWarn("[PLAYER] Speech completion timed out for step \(stepIndex + 1)")
+            self.handleStepFinish(stepIndex)
+        }
+        completionWatchdog = item
+        completionWatchdogStep = stepIndex
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: item)
     }
 }

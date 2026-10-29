@@ -106,8 +106,10 @@ final class DrawingDemoController: NSObject, NSWindowDelegate {
         func r(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> DrawingRect {
             DrawingRect(x: x, y: y, width: w, height: h)
         }
-        func d(_ kind: DrawingKind, _ geometry: DrawingGeometry, text: String? = nil, order: Int? = nil) -> DrawingElement {
-            DrawingElement(kind: kind, geometry: geometry, text: text, order: order)
+        func d(_ kind: DrawingKind, _ geometry: DrawingGeometry, text: String? = nil,
+               color: String? = nil, order: Int? = nil) -> DrawingElement {
+            DrawingElement(kind: kind, geometry: geometry, text: text,
+                           style: color.map { DrawingStyle(color: $0) }, order: order)
         }
         return [
             Step(say: "First, underline the heading and highlight a key phrase.", cue: "underline",
@@ -116,11 +118,11 @@ final class DrawingDemoController: NSObject, NSWindowDelegate {
                     d(.highlight, .rect(r(95, 188, 435, 42)), order: 1),
                     d(.explanatoryLabel, .point(p(555, 175)), text: "Start with the title", order: 2)
                  ]),
-            Step(say: "A straight arrow shows the flow. A curved arrow shows another route around it.", cue: "arrow",
+            Step(say: "The red outline identifies the first card. An arrow points to the second card, and a curved arrow shows another route.", cue: "red outline",
                  focus: [440, 490], annotations: nil, keep: false, drawings: [
-                    d(.circle, .rect(r(95, 300, 350, 260)), order: 0),
+                    d(.rect, .rect(r(92, 300, 380, 260)), color: "red", order: 0),
                     d(.ellipse, .rect(r(530, 300, 360, 260)), order: 1),
-                    d(.arrow, .segment(p(425, 418), p(530, 418)), order: 2),
+                    d(.arrow, .segment(p(475, 418), p(530, 418)), color: "blue", order: 2),
                     d(.curvedArrow, .cubic(p(400, 500), p(470, 270), p(560, 265), p(625, 330)), order: 3)
                  ]),
             Step(say: "Polygons, braces, brackets, and smooth strokes group ideas without covering the words.", cue: "group ideas",

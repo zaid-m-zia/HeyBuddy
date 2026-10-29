@@ -141,6 +141,9 @@ enum Screen {
             p.terminate()
             throw screenError("Screenshot process timed out.")
         }
+        guard p.terminationStatus == 0 else {
+            throw screenError("Screenshot preparation failed (\(URL(fileURLWithPath: exec).lastPathComponent) exit \(p.terminationStatus)).")
+        }
     }
 
     // -------------------------------------------------------------------------
